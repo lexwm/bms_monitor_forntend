@@ -1,0 +1,1410 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "BMS Monitor API",
+    "version": "0.2.0",
+    "description": "Read-only LAN telemetry. UTC reception time is not measurement time. Additive response fields are permitted; known fields remain strictly validated.",
+    "license": {
+      "name": "Private",
+      "identifier": "LicenseRef-Proprietary"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8088",
+      "description": "Local development only"
+    }
+  ],
+  "security": [],
+  "tags": [
+    {
+      "name": "Battery",
+      "description": "Battery reception state"
+    }
+  ],
+  "paths": {
+    "/api/v1/battery/latest": {
+      "get": {
+        "operationId": "getLatestBattery",
+        "tags": [
+          "Battery"
+        ],
+        "summary": "Read the latest measurement",
+        "description": "No query parameters. Latest measurement includes invalid records; it never silently falls back to last_valid. Stale when age > 20 seconds. No cache.",
+        "responses": {
+          "200": {
+            "description": "Latest measurement, including stale or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No measurements or unknown resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown query parameters are rejected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database or source data unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/telemetry/records": {
+      "post": {
+        "operationId": "ingestRecord",
+        "tags": [
+          "Battery"
+        ],
+        "summary": "Persist one source record; no collector implementation",
+        "description": "Maximum 65536 bytes, JSON depth32. Source received_at is immutable, <=6 fractional digits and not future. Same identity and content returns200, conflict409. Only acknowledged after commit. Record object retained as semantic JSON.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestRecord"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "HTTP 201: successful result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "HTTP 200: successful result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "HTTP 400: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "HTTP 409: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "HTTP 413: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "HTTP 415: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "HTTP 422: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "HTTP 503: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "HTTP 500: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/telemetry/state": {
+      "get": {
+        "operationId": "getStreamState",
+        "tags": [
+          "Battery"
+        ],
+        "summary": "Coherent snapshot for stream bootstrap or recovery",
+        "responses": {
+          "200": {
+            "description": "HTTP 200: successful result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreamState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "HTTP 422: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "HTTP 503: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "HTTP 500: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/battery/history": {
+      "get": {
+        "operationId": "getHistory",
+        "tags": [
+          "Battery"
+        ],
+        "summary": "Bounded raw history with explicit missing-data intervals",
+        "description": "UTC half-open interval, maximum6 hours, 5000 in-range measurements. Excess density422. Boundary neighbours support gap calculation, not returned as points. Coverage is observation coverage, not power availability or energy.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTTP 200: successful result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "HTTP 422: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "HTTP 503: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "HTTP 500: documented error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Battery": {
+        "type": "object",
+        "required": [
+          "voltage_v",
+          "current_a",
+          "power_w",
+          "soc_percent",
+          "remaining_ah",
+          "reported_capacity_ah",
+          "cell_min_v",
+          "cell_max_v",
+          "cell_delta_mv",
+          "cells_v",
+          "temperatures_c",
+          "charge_mos_on",
+          "discharge_mos_on",
+          "protection_flags",
+          "cycles"
+        ],
+        "properties": {
+          "voltage_v": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "current_a": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "power_w": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "soc_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "remaining_ah": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "reported_capacity_ah": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cell_min_v": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cell_max_v": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cell_delta_mv": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cells_v": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number",
+              "minimum": 0
+            },
+            "minItems": 8,
+            "maxItems": 8
+          },
+          "temperatures_c": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 16
+          },
+          "charge_mos_on": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "discharge_mos_on": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "protection_flags": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cycles": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "LastValid": {
+        "type": "object",
+        "required": [
+          "received_at",
+          "battery"
+        ],
+        "properties": {
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "battery": {
+            "$ref": "#/components/schemas/Battery"
+          }
+        }
+      },
+      "FreshLatest": {
+        "type": "object",
+        "required": [
+          "device_id",
+          "boot_id",
+          "sequence",
+          "received_at",
+          "measured_at",
+          "time_quality",
+          "server_time",
+          "age_seconds",
+          "data_source",
+          "ble_connected",
+          "last_valid",
+          "state",
+          "valid",
+          "stale",
+          "mode",
+          "battery",
+          "reason",
+          "revision"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "const": "sacred-sun-monitor-01"
+          },
+          "boot_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "measured_at": {
+            "type": "null"
+          },
+          "time_quality": {
+            "type": "string",
+            "const": "reception_only"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "age_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "data_source": {
+            "type": "string",
+            "enum": [
+              "synthetic",
+              "device"
+            ]
+          },
+          "ble_connected": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "last_valid": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LastValid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "const": "fresh"
+          },
+          "valid": {
+            "type": "boolean",
+            "const": true
+          },
+          "stale": {
+            "type": "boolean",
+            "const": false
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "charge",
+              "discharge",
+              "idle",
+              "unknown"
+            ]
+          },
+          "battery": {
+            "$ref": "#/components/schemas/Battery"
+          },
+          "reason": {
+            "type": "null"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "StaleLatest": {
+        "type": "object",
+        "required": [
+          "device_id",
+          "boot_id",
+          "sequence",
+          "received_at",
+          "measured_at",
+          "time_quality",
+          "server_time",
+          "age_seconds",
+          "data_source",
+          "ble_connected",
+          "last_valid",
+          "state",
+          "valid",
+          "stale",
+          "mode",
+          "battery",
+          "reason",
+          "revision"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "const": "sacred-sun-monitor-01"
+          },
+          "boot_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "measured_at": {
+            "type": "null"
+          },
+          "time_quality": {
+            "type": "string",
+            "const": "reception_only"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "age_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "data_source": {
+            "type": "string",
+            "enum": [
+              "synthetic",
+              "device"
+            ]
+          },
+          "ble_connected": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "last_valid": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LastValid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "const": "stale"
+          },
+          "valid": {
+            "type": "boolean",
+            "const": true
+          },
+          "stale": {
+            "type": "boolean",
+            "const": true
+          },
+          "mode": {
+            "type": "string",
+            "const": "unknown"
+          },
+          "battery": {
+            "$ref": "#/components/schemas/Battery"
+          },
+          "reason": {
+            "type": "string",
+            "const": "data_stale"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "InvalidLatest": {
+        "type": "object",
+        "required": [
+          "device_id",
+          "boot_id",
+          "sequence",
+          "received_at",
+          "measured_at",
+          "time_quality",
+          "server_time",
+          "age_seconds",
+          "data_source",
+          "ble_connected",
+          "last_valid",
+          "state",
+          "valid",
+          "stale",
+          "mode",
+          "battery",
+          "reason",
+          "revision"
+        ],
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "const": "sacred-sun-monitor-01"
+          },
+          "boot_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "measured_at": {
+            "type": "null"
+          },
+          "time_quality": {
+            "type": "string",
+            "const": "reception_only"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "age_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "data_source": {
+            "type": "string",
+            "enum": [
+              "synthetic",
+              "device"
+            ]
+          },
+          "ble_connected": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "last_valid": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LastValid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "const": "invalid"
+          },
+          "valid": {
+            "type": "boolean",
+            "const": false
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string",
+            "const": "unknown"
+          },
+          "battery": {
+            "type": "null"
+          },
+          "reason": {
+            "type": "string",
+            "const": "invalid_measurement"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "LatestResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/FreshLatest"
+          },
+          {
+            "$ref": "#/components/schemas/StaleLatest"
+          },
+          {
+            "$ref": "#/components/schemas/InvalidLatest"
+          }
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "no_measurements_yet",
+                  "invalid_parameters",
+                  "database_unavailable",
+                  "invalid_source_data",
+                  "not_found",
+                  "method_not_allowed",
+                  "internal_error",
+                  "invalid_payload",
+                  "payload_too_large",
+                  "unsupported_media_type",
+                  "record_conflict",
+                  "range_too_dense"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "IngestBattery": {
+        "type": "object",
+        "required": [
+          "voltage_v",
+          "current_a",
+          "power_w",
+          "soc_percent",
+          "remaining_ah",
+          "reported_capacity_ah",
+          "cell_min_v",
+          "cell_max_v",
+          "cell_delta_mv",
+          "cells_v",
+          "temperatures_c",
+          "charge_mos_on",
+          "discharge_mos_on",
+          "protection_flags",
+          "cycles"
+        ],
+        "properties": {
+          "voltage_v": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "current_a": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "power_w": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "soc_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          },
+          "remaining_ah": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "reported_capacity_ah": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cell_min_v": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cell_max_v": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cell_delta_mv": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "cells_v": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number",
+              "minimum": 0
+            },
+            "minItems": 8,
+            "maxItems": 8
+          },
+          "temperatures_c": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 16
+          },
+          "charge_mos_on": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "discharge_mos_on": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "protection_flags": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 2147483647
+          },
+          "cycles": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        }
+      },
+      "IngestRecord": {
+        "type": "object",
+        "required": [
+          "schema",
+          "device_id",
+          "boot_id",
+          "sequence",
+          "uptime_ms",
+          "received_at",
+          "kind",
+          "valid",
+          "record"
+        ],
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "const": 1
+          },
+          "device_id": {
+            "type": "string",
+            "const": "sacred-sun-monitor-01"
+          },
+          "boot_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "uptime_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "measurement",
+              "boot",
+              "event"
+            ]
+          },
+          "valid": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "record": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "measurement"
+                },
+                "valid": {
+                  "const": true
+                }
+              },
+              "required": [
+                "kind",
+                "valid"
+              ]
+            },
+            "then": {
+              "properties": {
+                "record": {
+                  "type": "object",
+                  "required": [
+                    "battery"
+                  ],
+                  "properties": {
+                    "battery": {
+                      "$ref": "#/components/schemas/IngestBattery"
+                    },
+                    "ble_connected": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "measurement"
+                },
+                "valid": {
+                  "const": false
+                }
+              },
+              "required": [
+                "kind",
+                "valid"
+              ]
+            },
+            "then": {
+              "properties": {
+                "record": {
+                  "type": "object",
+                  "required": [
+                    "battery"
+                  ],
+                  "properties": {
+                    "battery": {
+                      "type": "null"
+                    },
+                    "ble_connected": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "measurement"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "valid": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "valid": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Receipt": {
+        "type": "object",
+        "required": [
+          "status",
+          "revision",
+          "device_id",
+          "boot_id",
+          "sequence"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "stored",
+              "duplicate"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "device_id": {
+            "type": "string",
+            "const": "sacred-sun-monitor-01"
+          },
+          "boot_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        }
+      },
+      "StreamState": {
+        "type": "object",
+        "required": [
+          "schema",
+          "revision",
+          "server_time",
+          "latest",
+          "topic",
+          "hub_url"
+        ],
+        "properties": {
+          "schema": {
+            "const": 1,
+            "type": "integer"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+          },
+          "latest": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LatestResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "topic": {
+            "type": "string",
+            "const": "urn:bms:battery:sacred-sun-monitor-01"
+          },
+          "hub_url": {
+            "type": "string",
+            "const": "/.well-known/mercure"
+          }
+        }
+      },
+      "TelemetryEvent": {
+        "type": "object",
+        "required": [
+          "schema",
+          "revision",
+          "server_time",
+          "latest",
+          "history_changed"
+        ],
+        "properties": {
+          "schema": {
+            "const": 1,
+            "type": "integer"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+          },
+          "latest": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LatestResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "history_changed": {
+            "const": true,
+            "type": "boolean"
+          }
+        }
+      },
+      "HistoryPoint": {
+        "type": "object",
+        "required": [
+          "received_at",
+          "boot_id",
+          "sequence",
+          "valid",
+          "current_a",
+          "power_w",
+          "soc_percent"
+        ],
+        "properties": {
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+          },
+          "boot_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "valid": {
+            "type": "boolean"
+          },
+          "current_a": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "power_w": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "soc_percent": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          }
+        }
+      },
+      "Gap": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+          }
+        }
+      },
+      "HistoryResponse": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "revision",
+          "points",
+          "gaps",
+          "observed_coverage_seconds",
+          "period_seconds"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "points": {
+            "type": "array",
+            "maxItems": 5000,
+            "items": {
+              "$ref": "#/components/schemas/HistoryPoint"
+            }
+          },
+          "gaps": {
+            "type": "array",
+            "maxItems": 5002,
+            "items": {
+              "$ref": "#/components/schemas/Gap"
+            }
+          },
+          "observed_coverage_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "period_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
+    }
+  }
+}
