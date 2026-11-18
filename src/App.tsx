@@ -1,47 +1,85 @@
+import { useRef, useState } from 'react';
 import { useTelemetry } from './useTelemetry';
-const format = (value: number | null | undefined, digits = 1) => value == null ? '—' : value.toLocaleString('ru-RU', { maximumFractionDigits: digits });
-const time = (value: string) => new Date(value).toLocaleString('ru-RU', { timeZone: 'Europe/Kyiv' });
+import { format, time, clockTime } from './format';
+import { SocIndicator } from './components/SocIndicator';
+import { HistoryChart } from './components/HistoryChart';
+import { NumericReading } from './components/NumericReading';
+
 const errorText: Record<string, string> = {
- no_measurements_yet: 'Измерений пока нет', database_unavailable: 'База данных недоступна',
- invalid_source_data: 'Источник передал некорректные данные', incompatible_response: 'Ответ API не соответствует контракту',
+ no_measurements_yet: 'Вимірювань поки немає', database_unavailable: 'База даних недоступна',
+ invalid_source_data: 'Джерело передало некоректні дані', incompatible_response: 'Сервер надіслав дані в непідтримуваному форматі',
 };
 export function App() {
- const {state, error, streamProblem, history, historyError, age, refresh}=useTelemetry();
- const data=state?.latest;
- const lastSuccess=state?.server_time;
+ const { state, error, streamProblem, history, historyError, age, refresh } = useTelemetry();
+ const [menuOpen, setMenuOpen] = useState(false);
+ const menuButton = useRef<HTMLButtonElement>(null);
+ const data = state?.latest;
  const stale = data?.stale === true || (age !== null && age > 20);
  const healthy = data?.state === 'fresh' && !stale && !error;
- const title = error ? (errorText[error] ?? 'Нет связи с сервером') : !data ? (state ? 'Измерений пока нет' : 'Получаем состояние…') : data.state === 'invalid' ? 'Нет корректного измерения' : stale ? 'Нет новых измерений' : 'Данные актуальны';
+ const title = error ? (errorText[error] ?? 'Немає зв’язку із сервером') : !data ? (state ? 'Вимірювань поки немає' : 'Отримуємо стан…') : data.state === 'invalid' ? 'Немає коректного вимірювання' : stale ? 'Немає нових вимірювань' : 'Дані актуальні';
  const mode = healthy ? data?.mode : 'unknown';
- const modeLabel = { charge: 'Заряд', discharge: 'Разряд', idle: 'Покой', unknown: 'Режим не определён' }[mode ?? 'unknown'];
  const battery = data?.battery;
- return <main>
-  <header className="masthead"><a className="brand" href="/" aria-label="BMS Monitor — главная"><span className="brand-symbol">▥</span><span>BMS<span className="brand-light"> / monitor</span></span></a><span className="network">Локальная сеть <span>↗</span></span></header>
-  <section className="heading"><div><p className="eyebrow">ЭНЕРГИЯ ПОД НАБЛЮДЕНИЕМ</p><h1>Состояние батареи</h1><p className="subtitle">Последние показания. Без догадок о том, чего мы не знаем.</p></div>{data?.data_source === 'synthetic' && <span className="demo-tag">Тестовые данные</span>}</section>
-  <section className={`status-bar ${healthy ? 'good' : 'warning'}`} role="status" aria-live="polite"><div><span className="status-dot"/><strong>{title}</strong></div><span>{age === null ? 'Ожидаем API' : `Возраст данных: ${Math.floor(age)} сек`}</span></section>
-  {error && lastSuccess && <p className="notice">Последний успешный ответ: {time(lastSuccess)}. Ниже сохранённые показания, не текущее состояние.</p>}
-  {streamProblem && <p className="notice">Канал обновлений восстанавливается. Возраст последних данных продолжает увеличиваться.</p>}
-  <div className="overview">
-   <section className="soc-card panel"><p className="eyebrow">УРОВЕНЬ ЗАРЯДА · BMS</p><div className="soc-value">{format(battery?.soc_percent, 0)}<span>%</span></div><div className="charge-track" role="img" aria-label={`Заряд ${format(battery?.soc_percent, 0)} процентов`}><div style={{ width: `${battery?.soc_percent ?? 0}%` }}/></div><div className="soc-bottom"><span className="mode">{modeLabel}</span><span>{format(battery?.remaining_ah)} <small>А·ч</small></span></div><p className="muted">Показание BMS, не измерение фактической ёмкости.</p></section>
-   <section className="metrics" aria-label="Электрические показатели">
-    <Metric label="Напряжение" value={format(battery?.voltage_v, 2)} unit="В" detail="На клеммах батареи"/>
-    <Metric label="Ток" value={format(battery?.current_a, 2)} unit="А" detail="Исходный знак сохранён"/>
-    <Metric label="Мощность" value={format(battery?.power_w)} unit="Вт" detail="Результирующая мощность батареи"/>
-    <Metric label="Разбаланс ячеек" value={format(battery?.cell_delta_mv)} unit="мВ" detail="Разница максимума и минимума"/>
+ const lastValidAt = data?.valid ? data.received_at : data?.last_valid?.received_at;
+ const modeLabel = !healthy ? 'Немає поточних даних' : battery?.current_a == null ? 'Немає даних про струм' : { charge: '↗ Заряджання', discharge: '↘ Розряджання', idle: 'Від мережі / без заряджання', unknown: 'Напрям струму невідомий' }[mode ?? 'unknown'];
+ const modeDetail = !healthy ? 'Стан батареї очікує на актуальні показання.' : battery?.current_a == null ? 'Джерело не передало значення струму.' : {
+  charge: 'Батарея накопичує енергію.', discharge: 'Батарея віддає енергію.',
+  idle: 'Струм батареї дорівнює нулю.',
+  unknown: 'Сервер не визначив напрям струму.',
+ }[mode ?? 'unknown'];
+ const temperatures = battery?.temperatures_c ?? [];
+ const temperatureMax = temperatures.length ? Math.max(...temperatures) : null;
+ const tempMin = Math.min(0, ...temperatures); const tempMax = Math.max(50, ...temperatures);
+ const tempMagnitude = Math.max(Math.abs(tempMin), Math.abs(tempMax));
+ const tempPosition = (value: number) => (value / tempMagnitude - tempMin / tempMagnitude) / (tempMax / tempMagnitude - tempMin / tempMagnitude) * 100;
+ const cells = battery?.cells_v;
+ const cellScale = Math.max(4, Math.ceil(Math.max(0, ...(cells ?? []))));
+ const protection = battery?.protection_flags;
+ const coverage = history ? Math.min(100, history.observed_coverage_seconds / history.period_seconds * 100) : null;
+ const contextNote = error ? (state ? 'Збережені показання. Час стану — у розділі «Про дані».' : 'Очікуємо на зв’язок із сервером.') : data?.state === 'invalid' ? 'Некоректне вимірювання не використовується як поточне.' : stale ? 'Збережені показання. Пауза вимірювань не означає аварію.' : 'Показання системи керування батареєю. Час отримання — за годинником джерела.';
+ function closeMenu() { setMenuOpen(false); menuButton.current?.focus(); }
+ return <main className="stage"><div className="app" onKeyDown={event => { if (event.key === 'Escape' && menuOpen) closeMenu(); }}>
+  <header className="topbar">
+   <div className="brand"><button ref={menuButton} type="button" className="menu-toggle" aria-label={menuOpen ? 'Закрити меню' : 'Відкрити меню'} aria-expanded={menuOpen} aria-controls="main-menu" onClick={() => setMenuOpen(!menuOpen)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h16"/></svg></button><a className="brand-link" href="#overview"><span className="brand-name">Монітор <span>батареї</span></span><span className="brand-sub">8 комірок · літій-залізо-фосфатна</span></a></div>
+   <div className="header-right"><span className="demo-tag" style={{ visibility: data?.data_source === 'synthetic' ? 'visible' : 'hidden' }}>Тестові дані</span><span className="time">{data ? clockTime(data.received_at) : '—'} · Київ</span></div>
+  </header>
+  <nav id="main-menu" className="drawer" aria-label="Головне меню" hidden={!menuOpen}><div className="drawer-head">МОНІТОР БАТАРЕЇ<button type="button" aria-label="Закрити навігацію" onClick={closeMenu}>×</button></div><a href="#overview" onClick={closeMenu}>Огляд</a><a href="#history" onClick={closeMenu}>Історія</a><a href="#data-details" onClick={closeMenu}>Про дані</a></nav>
+  <section className={`status-bar ${healthy ? 'good' : 'neutral'}`} role="status" aria-live="polite"><span><i className="status-dot"/><strong>{title}</strong></span><span>{age === null ? 'Очікуємо дані' : `Вік даних: ${Math.floor(age)} с`}</span></section>
+  <div className="status-context"><p className="notice">{contextNote}</p><p className="stream-note">{streamProblem ? 'Канал оновлень відновлюється. Вік даних зростає.' : 'Нові показання з’являться автоматично.'}</p></div>
+  <div className="grid" id="overview">
+   <section className="panel hero"><div className="hero-head"><span className="device-chip">БАТАРЕЯ 01</span><span className="micro">8 комірок · {format(battery?.voltage_v, 2)} В</span></div>
+    <SocIndicator value={battery?.soc_percent} mode={modeLabel}/>
+    <div className="hero-bottom"><p className="eyebrow">СТАН БАТАРЕЇ</p><h1>Заряд батареї</h1><div className="hero-meta"><span>{format(battery?.remaining_ah)} А·год <span className="muted">за даними батареї</span></span><span>{protection == null ? 'Захист: немає даних' : protection === 0 ? 'Захист не спрацював' : 'Спрацював захист'}</span></div></div>
    </section>
+   <Metric label="Струм батареї" value={battery?.current_a} unit="А" detail={modeDetail} kind="current"/>
+   <Metric label="Потужність" value={battery?.power_w} unit="Вт" detail="Потужність батареї" kind="power"/>
+   <section className="panel cells" aria-label="Напруга комірок"><div className="panel-head"><h2 className="panel-title">Комірки · напруга, В</h2><span className="delta">Δ {format(battery?.cell_delta_mv)} мВ</span></div>
+    <div className="cells-grid">{Array.from({ length: 8 }, (_, index) => {
+     const voltage = cells?.[index];
+     const text = format(voltage, 3, 3);
+     return <div className="cell" key={index}>
+      <span className="cell-id">{String(index + 1).padStart(2, '0')}</span>
+      <div className="cell-body">
+       {voltage !== undefined && <div className="cell-fill" aria-hidden="true" style={{ width: `calc((100% - 6px) * ${voltage / cellScale})` }}/>}
+       <div className="cell-reading" title={voltage === undefined ? 'Немає даних' : `${format(voltage, 'full')} В`}>
+        <strong className="reading-update" key={voltage} style={{ fontSize: `${5 / Math.max(5, text.length)}em` }}>{text}</strong><span className="cell-unit"> В</span>
+       </div>
+      </div>
+     </div>;
+    })}</div>
+    <div className="cells-foot"><span>Мін. <b>{format(battery?.cell_min_v, 3)} В</b></span><span>Макс. <b>{format(battery?.cell_max_v, 3)} В</b></span></div><p className="scale-note">Шкала 0–{format(cellScale)} В · заповнення показує напругу, а не заряд</p>
+   </section>
+   <HistoryChart title="Історія потужності" metric="power_w" unit="Потужність, Вт" history={history} failed={historyError}/>
+   <section className="panel temps"><div className="panel-head"><h2 className="panel-title">Температури</h2><span className="micro">Датчиків: {temperatures.length || '—'}</span></div><div className="temp-top"><NumericReading value={temperatureMax} unit="°C"/></div><span className="temp-label">Найвище показання</span>
+    <div className="temp-list" tabIndex={temperatures.length > 3 ? 0 : undefined} aria-label="Показання датчиків температури">{Array.from({ length: Math.max(3, temperatures.length) }, (_, index) => { const value = temperatures[index]; return <div className="temp-row" key={index} style={{ visibility: value === undefined ? 'hidden' : 'visible' }}><span>Датчик {String(index + 1).padStart(2, '0')}</span><div className="temp-bar" aria-hidden="true"><span style={{ width: value === undefined ? '0%' : `${tempPosition(value)}%` }}/></div><strong title={value === undefined ? undefined : `${format(value, 'full')} °C`}>{format(value)}°</strong></div>; })}</div>
+    <p className="temp-foot">{temperatures.length ? `Шкала ${format(tempMin)}–${format(tempMax)} °C · без оцінки меж безпеки` : 'Немає показань температури'}</p>
+   </section>
+   <HistoryChart title="Історія струму" metric="current_a" unit="Струм, А" history={history} failed={historyError}/>
+   <section className="panel quality"><div className="panel-head"><h2 className="panel-title">Повнота історії</h2><span className="micro">10 хвилин</span></div><div className="quality-value">{format(coverage)}<span>%</span></div><div className="quality-track" aria-hidden="true"><span style={{ width: `${coverage ?? 0}%` }}/></div><div className="quality-summary"><p className="quality-copy">Спостерігалося {format(history?.observed_coverage_seconds, 0)} із {format(history?.period_seconds, 0)} секунд.<br/>Проміжків без вимірювань: {history ? history.gaps.length : '—'}.<br/>Знімок до {history ? clockTime(history.to) : '—'} (Київ).</p></div><p className="history-warning">{historyError ? 'Не вдалося оновити історію. Збережений знімок може бути застарілим.' : history ? 'Знімок історії на момент оновлення.' : 'Знімок історії ще не отримано.'}</p><p className="quality-copy">Пропуски не замінюються нулями. Покриття вимірювань не означає безперервну роботу батареї.</p><button type="button" className="refresh-button" onClick={refresh}>Оновити знімок</button></section>
   </div>
-  <div className="details-grid">
-   <section className="panel cells"><div className="section-title"><h2>Напряжение ячеек</h2><span>8 ячеек</span></div><div className="cell-grid">{Array.from({ length: 8 }, (_, index) => <div className="cell" key={index}><span className="cell-label">{String(index + 1).padStart(2, '0')}</span><strong>{format(battery?.cells_v?.[index], 3)}</strong><span>В</span></div>)}</div><p className="muted">Без оценок «норма / опасность»: характеристики батареи ещё не подтверждены.</p></section>
-   <section className="panel provenance"><h2>О данных</h2><dl><div><dt>Получено источником</dt><dd>{data ? time(data.received_at) : '—'}</dd></div><div><dt>Часовой пояс</dt><dd>Киев</dd></div><div><dt>Точное время замера</dt><dd>Неизвестно</dd></div><div><dt>Температуры</dt><dd>{battery?.temperatures_c?.map(v => `${format(v)} °C`).join(' / ') || '—'}</dd></div></dl>{data?.last_valid && <p className="notice">Последнее корректное измерение: {time(data.last_valid.received_at)}.</p>}</section>
-  </div>
-  <section className="panel"><h2>Покрытие последних 10 минут</h2>
-   {history && <p>Наблюдалось {format(history.observed_coverage_seconds, 0)} из {format(history.period_seconds, 0)} секунд. Промежутков без данных: {history.gaps.length}.</p>}
-   {historyError && <p>Не удалось обновить историю. Сохранённый снимок может быть устаревшим.</p>}
-   <p className="muted">Снимок на момент загрузки. Отсутствие показаний не означает нулевой ток или аварию.</p><button type="button" onClick={refresh}>Обновить снимок</button>
-  </section>
-  <footer><span><span className="footer-mark">◈</span> BMS Monitor</span><span>Только наблюдение · обновления от сервера</span></footer>
- </main>;
+  <details className="data-details" id="data-details"><summary>Про дані та час вимірювань</summary><dl><div><dt>Отримано джерелом</dt><dd>{data ? time(data.received_at) : '—'}</dd></div><div><dt>Точний час вимірювання</dt><dd>Невідомо</dd></div><div><dt>Час стану від сервера</dt><dd>{state ? time(state.server_time) : '—'}</dd></div><div><dt>Напруга батареї</dt><dd>{format(battery?.voltage_v, 2)} В</dd></div></dl><p className="notice">Останнє коректне вимірювання: {lastValidAt ? time(lastValidAt) : '—'}.</p><p>Історія — знімок на момент завантаження або відновлення зв’язку. Поточні показання оновлюються за повідомленнями сервера. Розрив лінії також означає відсутність значення окремого показника.</p></details>
+  <footer className="footer"><span>МОНІТОР БАТАРЕЇ / ПОКАЗАННЯ БАТАРЕЇ</span><span>Час: Київ · поточні показання від сервера</span></footer>
+ </div></main>;
 }
-function Metric({ label, value, unit, detail }: { label: string; value: string; unit: string; detail: string }) {
- return <article className="panel metric"><h2>{label}</h2><p className="metric-value">{value}<span>{unit}</span></p><p className="muted">{detail}</p></article>;
+function Metric({ label, value, unit, detail, kind }: { label: string; value: number | null | undefined; unit: string; detail: string; kind: 'current' | 'power' }) {
+ return <section className={`panel metric ${kind}`} aria-label={label}><div className="metric-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">{kind === 'power' ? <path d="m13 2-8 12h6l-1 8 9-13h-7z"/> : <path d="M2 12h5l2-7 4 14 3-9 2 2h4"/>}</svg><span className="badge">Постійний струм</span></div><div className="metric-value" data-testid={`${kind}-value`}><NumericReading value={value} unit={unit} digits={kind === 'current' ? 2 : 1}/></div><h2 className="metric-name">{label}</h2><p className="metric-sub">{detail}</p><div className="metric-rule"/></section>;
 }

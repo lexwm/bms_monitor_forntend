@@ -82,6 +82,7 @@ export interface components {
     schemas: {
         Battery: {
             voltage_v: number | null;
+            /** @description Signed battery current in amperes: positive means charging, negative means discharging, exactly zero means no charging or discharging. Null means unavailable. */
             current_a: number | null;
             power_w: number | null;
             soc_percent: number | null;
@@ -125,7 +126,10 @@ export interface components {
             valid: true;
             /** @constant */
             stale: false;
-            /** @enum {string} */
+            /**
+             * @description For fresh valid measurements: charge when current_a > 0, discharge when current_a < 0, idle only when current_a = 0, unknown when current_a is unavailable. No deadband. The installation owner defines idle as mains / no charging; there is no independent mains-presence signal.
+             * @enum {string}
+             */
             mode: "charge" | "discharge" | "idle" | "unknown";
             battery: components["schemas"]["Battery"];
             reason: null;
@@ -200,6 +204,7 @@ export interface components {
         };
         IngestBattery: {
             voltage_v: number | null;
+            /** @description Signed battery current in amperes: positive means charging, negative means discharging, exactly zero means no charging or discharging. Null means unavailable. */
             current_a: number | null;
             power_w: number | null;
             soc_percent: number | null;
@@ -267,6 +272,7 @@ export interface components {
             boot_id: string;
             sequence: number;
             valid: boolean;
+            /** @description Signed battery current in amperes: positive means charging, negative means discharging, exactly zero means no charging or discharging. Null means unavailable. */
             current_a: number | null;
             power_w: number | null;
             soc_percent: number | null;

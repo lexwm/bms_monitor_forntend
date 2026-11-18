@@ -33,16 +33,16 @@ test('valid events still apply after bounded recovery attempts are exhausted',as
   requests++;
   await route.fulfill({status:unavailable?503:200,contentType:'application/json',json:unavailable?{error:{code:'database_unavailable',message:'Unavailable'}}:initial});
  });
- await page.goto('/');await expect(page.getByText('Тестовые данные')).toBeVisible();
+ await page.goto('/');await expect(page.getByText('Тестові дані')).toBeVisible();
  const baseline=requests;unavailable=true;
  await page.evaluate(()=>window.dispatchEvent(new Event('test-open')));
- await expect(page.getByRole('status')).toContainText('База данных недоступна');
+ await expect(page.getByRole('status')).toContainText('База даних недоступна');
  for(const [delay,count] of [[2100,baseline+2],[4100,baseline+3],[8100,baseline+4]]) {
   await page.clock.runFor(delay??0);await expect.poll(()=>requests).toBe(count);
  }
  await emit(page,eventFor(initial));
- await expect(page.getByRole('img',{name:'Заряд 77 процентов'})).toBeVisible();
- await expect(page.getByRole('status')).toContainText('База данных недоступна');
+ await expect(page.getByRole('img',{name:'Заряд 77 відсотків'})).toBeVisible();
+ await expect(page.getByRole('status')).toContainText('База даних недоступна');
  await page.clock.runFor(10000);expect(requests).toBe(baseline+4);
 });
 
@@ -51,25 +51,25 @@ test('failed manual refresh retains the stream and advancing age',async({page,re
  await page.route('**/api/v1/telemetry/state',async route=>{
   requests++;await route.fulfill({status:unavailable?503:200,contentType:'application/json',json:unavailable?{error:{code:'database_unavailable',message:'Unavailable'}}:initial});
  });
- await page.goto('/');await expect(page.getByText('Тестовые данные')).toBeVisible();
- await page.clock.runFor(5000);await expect(page.getByRole('status')).toContainText('Возраст данных: 15 сек');
+ await page.goto('/');await expect(page.getByText('Тестові дані')).toBeVisible();
+ await page.clock.runFor(5000);await expect(page.getByRole('status')).toContainText('Вік даних: 15 с');
  const streams=await page.locator('html').getAttribute('data-stream-count');unavailable=true;
- await page.getByRole('button',{name:'Обновить снимок'}).click();
- await expect(page.getByRole('status')).toContainText('База данных недоступна');
- await page.clock.runFor(1000);await expect(page.getByRole('status')).toContainText('Возраст данных: 16 сек');
+ await page.getByRole('button',{name:'Оновити знімок'}).click();
+ await expect(page.getByRole('status')).toContainText('База даних недоступна');
+ await page.clock.runFor(1000);await expect(page.getByRole('status')).toContainText('Вік даних: 16 с');
  expect(await page.locator('html').getAttribute('data-stream-count')).toBe(streams);
 });
 
 test('successful resync clears a malformed event warning but not a broken transport',async({page,request})=>{
  const initial=await snapshot(request);await mockStream(page);let requests=0;
  await page.route('**/api/v1/telemetry/state',async route=>{requests++;await route.fulfill({json:initial});});
- await page.goto('/');await expect(page.getByText('Тестовые данные')).toBeVisible();
+ await page.goto('/');await expect(page.getByText('Тестові дані')).toBeVisible();
  const baseline=requests;await emit(page,{schema:999});await expect.poll(()=>requests).toBe(baseline+1);
  await emit(page,eventFor(initial));
- await expect(page.getByRole('img',{name:'Заряд 77 процентов'})).toBeVisible();
- await expect(page.getByText('Канал обновлений восстанавливается.',{exact:false})).toHaveCount(0);
+ await expect(page.getByRole('img',{name:'Заряд 77 відсотків'})).toBeVisible();
+ await expect(page.getByText('Канал оновлень відновлюється.',{exact:false})).toHaveCount(0);
  await page.evaluate(()=>window.dispatchEvent(new Event('test-error')));
- await page.getByRole('button',{name:'Обновить снимок'}).click();
+ await page.getByRole('button',{name:'Оновити знімок'}).click();
  await expect.poll(()=>requests).toBe(baseline+2);
- await expect(page.getByText('Канал обновлений восстанавливается.',{exact:false})).toBeVisible();
+ await expect(page.getByText('Канал оновлень відновлюється.',{exact:false})).toBeVisible();
 });
