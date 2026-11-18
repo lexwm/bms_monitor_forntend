@@ -1,16 +1,18 @@
 import { useRef, useState } from 'react';
 import { useTelemetry } from './useTelemetry';
-import { format, time, clockTime } from './format';
+import { format, time, clockTime, historySeconds } from './format';
 import { SocIndicator } from './components/SocIndicator';
 import { HistoryChart } from './components/HistoryChart';
 import { NumericReading } from './components/NumericReading';
+import { ConfigurationPanel } from './components/ConfigurationPanel';
+import { historyRanges, historyRangeLabel } from './history';
 
 const errorText: Record<string, string> = {
  no_measurements_yet: 'Вимірювань поки немає', database_unavailable: 'База даних недоступна',
  invalid_source_data: 'Джерело передало некоректні дані', incompatible_response: 'Сервер надіслав дані в непідтримуваному форматі',
 };
 export function App() {
- const { state, error, streamProblem, history, historyError, age, refresh } = useTelemetry();
+ const { state, error, streamProblem, history, historyError, historyLoading, range, selectRange, age, refresh, configuration } = useTelemetry();
  const [menuOpen, setMenuOpen] = useState(false);
  const menuButton = useRef<HTMLButtonElement>(null);
  const data = state?.latest;
@@ -34,7 +36,7 @@ export function App() {
  const cells = battery?.cells_v;
  const cellScale = Math.max(4, Math.ceil(Math.max(0, ...(cells ?? []))));
  const protection = battery?.protection_flags;
- const coverage = history ? Math.min(100, history.observed_coverage_seconds / history.period_seconds * 100) : null;
+ const coverage = history && history.observed_coverage_seconds !== null && history.processing_status==='ready' ? Math.min(100, history.observed_coverage_seconds / history.period_seconds * 100) : null;
  const contextNote = error ? (state ? 'Збережені показання. Час стану — у розділі «Про дані».' : 'Очікуємо на зв’язок із сервером.') : data?.state === 'invalid' ? 'Некоректне вимірювання не використовується як поточне.' : stale ? 'Збережені показання. Пауза вимірювань не означає аварію.' : 'Показання системи керування батареєю. Час отримання — за годинником джерела.';
  function closeMenu() { setMenuOpen(false); menuButton.current?.focus(); }
  return <main className="stage"><div className="app" onKeyDown={event => { if (event.key === 'Escape' && menuOpen) closeMenu(); }}>
@@ -60,7 +62,7 @@ export function App() {
       <span className="cell-id">{String(index + 1).padStart(2, '0')}</span>
       <div className="cell-body">
        {voltage !== undefined && <div className="cell-fill" aria-hidden="true" style={{ width: `calc((100% - 6px) * ${voltage / cellScale})` }}/>}
-       <div className="cell-reading" title={voltage === undefined ? 'Немає даних' : `${format(voltage, 'full')} В`}>
+       <div className="cell-reading" title={voltage === undefined ? 'Немає даних' : `${format(voltage, 3)} В`}>
         <strong className="reading-update" key={voltage} style={{ fontSize: `${5 / Math.max(5, text.length)}em` }}>{text}</strong><span className="cell-unit"> В</span>
        </div>
       </div>
@@ -68,18 +70,19 @@ export function App() {
     })}</div>
     <div className="cells-foot"><span>Мін. <b>{format(battery?.cell_min_v, 3)} В</b></span><span>Макс. <b>{format(battery?.cell_max_v, 3)} В</b></span></div><p className="scale-note">Шкала 0–{format(cellScale)} В · заповнення показує напругу, а не заряд</p>
    </section>
-   <HistoryChart title="Історія потужності" metric="power_w" unit="Потужність, Вт" history={history} failed={historyError}/>
+   <HistoryChart title="Історія потужності" metric="power_w" unit="Потужність, Вт" history={history} failed={historyError} controls={<div className="history-controls" role="group" aria-label="Період історії потужності, струму та повноти">{historyRanges.map(item=><button key={item.value} type="button" aria-pressed={range===item.value} disabled={range===item.value} onClick={()=>selectRange(item.value)}>{item.label}</button>)}</div>}/>
    <section className="panel temps"><div className="panel-head"><h2 className="panel-title">Температури</h2><span className="micro">Датчиків: {temperatures.length || '—'}</span></div><div className="temp-top"><NumericReading value={temperatureMax} unit="°C"/></div><span className="temp-label">Найвище показання</span>
-    <div className="temp-list" tabIndex={temperatures.length > 3 ? 0 : undefined} aria-label="Показання датчиків температури">{Array.from({ length: Math.max(3, temperatures.length) }, (_, index) => { const value = temperatures[index]; return <div className="temp-row" key={index} style={{ visibility: value === undefined ? 'hidden' : 'visible' }}><span>Датчик {String(index + 1).padStart(2, '0')}</span><div className="temp-bar" aria-hidden="true"><span style={{ width: value === undefined ? '0%' : `${tempPosition(value)}%` }}/></div><strong title={value === undefined ? undefined : `${format(value, 'full')} °C`}>{format(value)}°</strong></div>; })}</div>
+    <div className="temp-list" tabIndex={temperatures.length > 3 ? 0 : undefined} aria-label="Показання датчиків температури">{Array.from({ length: Math.max(3, temperatures.length) }, (_, index) => { const value = temperatures[index]; return <div className="temp-row" key={index} style={{ visibility: value === undefined ? 'hidden' : 'visible' }}><span>Датчик {String(index + 1).padStart(2, '0')}</span><div className="temp-bar" aria-hidden="true"><span style={{ width: value === undefined ? '0%' : `${tempPosition(value)}%` }}/></div><strong title={value === undefined ? undefined : `${format(value, 3)} °C`}>{format(value)}°</strong></div>; })}</div>
     <p className="temp-foot">{temperatures.length ? `Шкала ${format(tempMin)}–${format(tempMax)} °C · без оцінки меж безпеки` : 'Немає показань температури'}</p>
    </section>
    <HistoryChart title="Історія струму" metric="current_a" unit="Струм, А" history={history} failed={historyError}/>
-   <section className="panel quality"><div className="panel-head"><h2 className="panel-title">Повнота історії</h2><span className="micro">10 хвилин</span></div><div className="quality-value">{format(coverage)}<span>%</span></div><div className="quality-track" aria-hidden="true"><span style={{ width: `${coverage ?? 0}%` }}/></div><div className="quality-summary"><p className="quality-copy">Спостерігалося {format(history?.observed_coverage_seconds, 0)} із {format(history?.period_seconds, 0)} секунд.<br/>Проміжків без вимірювань: {history ? history.gaps.length : '—'}.<br/>Знімок до {history ? clockTime(history.to) : '—'} (Київ).</p></div><p className="history-warning">{historyError ? 'Не вдалося оновити історію. Збережений знімок може бути застарілим.' : history ? 'Знімок історії на момент оновлення.' : 'Знімок історії ще не отримано.'}</p><p className="quality-copy">Пропуски не замінюються нулями. Покриття вимірювань не означає безперервну роботу батареї.</p><button type="button" className="refresh-button" onClick={refresh}>Оновити знімок</button></section>
+   <section className="panel quality"><div className="panel-head"><h2 className="panel-title">Повнота історії</h2><span className="micro">{history ? historyRangeLabel(history.range) : '—'}</span></div><div className="quality-value">{format(coverage)}<span>%</span></div><div className="quality-track" aria-hidden="true"><span style={{ width: `${coverage ?? 0}%` }}/></div><div className="quality-summary"><p className="quality-copy">Спостерігалося {historySeconds(history?.observed_coverage_seconds)} із {historySeconds(history?.period_seconds)} секунд.<br/>Проміжків без вимірювань: {history?.kind==='raw' ? history.gaps.length : '—'}.<br/>Станом на {history ? time(history.to) : '—'} (Київ).<br/>{history?.processing_status==='pending' ? `Історія готується. Підготовлено ${historySeconds(history.prepared_coverage_seconds)} із ${historySeconds(history.period_seconds)} секунд.` : history?.kind==='aggregate' ? 'Межі коротких пропусків у зведених інтервалах невідомі.' : ''}</p></div><p className="history-warning">{historyError ? 'Не вдалося оновити історію. Збережений знімок може бути застарілим.' : historyLoading ? `Оновлюємо історію · ${historyRangeLabel(range)}. Показано попередній знімок.` : history ? 'Знімок історії на момент оновлення.' : 'Знімок історії ще не отримано.'}</p><p className="quality-copy">Пропуски не замінюються нулями. Покриття вимірювань не означає безперервну роботу батареї.</p><button type="button" className="refresh-button" onClick={refresh}>Оновити знімок</button></section>
   </div>
-  <details className="data-details" id="data-details"><summary>Про дані та час вимірювань</summary><dl><div><dt>Отримано джерелом</dt><dd>{data ? time(data.received_at) : '—'}</dd></div><div><dt>Точний час вимірювання</dt><dd>Невідомо</dd></div><div><dt>Час стану від сервера</dt><dd>{state ? time(state.server_time) : '—'}</dd></div><div><dt>Напруга батареї</dt><dd>{format(battery?.voltage_v, 2)} В</dd></div></dl><p className="notice">Останнє коректне вимірювання: {lastValidAt ? time(lastValidAt) : '—'}.</p><p>Історія — знімок на момент завантаження або відновлення зв’язку. Поточні показання оновлюються за повідомленнями сервера. Розрив лінії також означає відсутність значення окремого показника.</p></details>
+  <ConfigurationPanel configuration={configuration}/>
+  <details className="data-details" id="data-details"><summary>Про дані та час вимірювань</summary><dl><div><dt>Отримано джерелом</dt><dd>{data ? time(data.received_at) : '—'}</dd></div><div><dt>Точний час вимірювання</dt><dd>Невідомо</dd></div><div><dt>Час стану від сервера</dt><dd>{state ? time(state.server_time) : '—'}</dd></div><div><dt>Напруга батареї</dt><dd>{format(battery?.voltage_v, 2)} В</dd></div></dl><p className="notice">Останнє коректне вимірювання: {lastValidAt ? time(lastValidAt) : '—'}.</p><p>Історія оновлюється після нових даних, зміни періоду або відновлення зв’язку. Підготовка зведеної історії показується окремо від пропусків вимірювань. Поточні показання оновлюються за повідомленнями сервера. Розрив лінії також означає відсутність значення окремого показника.</p></details>
   <footer className="footer"><span>МОНІТОР БАТАРЕЇ / ПОКАЗАННЯ БАТАРЕЇ</span><span>Час: Київ · поточні показання від сервера</span></footer>
  </div></main>;
 }
 function Metric({ label, value, unit, detail, kind }: { label: string; value: number | null | undefined; unit: string; detail: string; kind: 'current' | 'power' }) {
- return <section className={`panel metric ${kind}`} aria-label={label}><div className="metric-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">{kind === 'power' ? <path d="m13 2-8 12h6l-1 8 9-13h-7z"/> : <path d="M2 12h5l2-7 4 14 3-9 2 2h4"/>}</svg><span className="badge">Постійний струм</span></div><div className="metric-value" data-testid={`${kind}-value`}><NumericReading value={value} unit={unit} digits={kind === 'current' ? 2 : 1}/></div><h2 className="metric-name">{label}</h2><p className="metric-sub">{detail}</p><div className="metric-rule"/></section>;
+ return <section className={`panel metric ${kind}`} aria-label={label}><div className="metric-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">{kind === 'power' ? <path d="m13 2-8 12h6l-1 8 9-13h-7z"/> : <path d="M2 12h5l2-7 4 14 3-9 2 2h4"/>}</svg><span className="badge">Постійний струм</span></div><div className="metric-value" data-testid={`${kind}-value`}><NumericReading value={value} unit={unit} digits={3}/></div><h2 className="metric-name">{label}</h2><p className="metric-sub">{detail}</p><div className="metric-rule"/></section>;
 }

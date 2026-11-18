@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { format } from '../src/format';
+import { format, historySeconds } from '../src/format';
 it('preserves current precision, zero and missing readings', () => {
  expect(format(0.04, 2)).toBe('0,04');
  expect(format(-0.04, 2)).toBe('-0,04');
@@ -17,12 +17,16 @@ it('bounds extreme finite numbers without discarding sign or magnitude', () => {
  }
 });
 
-it('keeps full numeric precision in localized tooltips', () => {
- for (const value of [1.23456789e-19, -1.23456789e-19, Number.MIN_VALUE, Number.MAX_VALUE, 0, -12.3456789012345, 3.31234]) {
-  const text = format(value, 'full');
-  expect(Number(text.replace(',', '.').replace('Е', 'e'))).toBe(value);
- }
- expect(format(3.31234, 'full')).toBe('3,31234');
+it('limits physical values and tooltips to three fractional digits', () => {
+ expect(format(3.31234, 'full')).toBe('3,312');
+ expect(format(12.3455)).toBe('12,346');
+ expect(format(-12.3455)).toBe('-12,346');
+ expect(format(-0)).toBe('0');
+ expect(format(0)).toBe('0');
+ expect(format(1.23456789e-19)).toBe('1,235Е-19');
+ expect(format(-1.23456789e-19)).toBe('-1,235Е-19');
+ expect(format(Number.MIN_VALUE)).not.toBe('0');
+ expect(format(1.234567, 8)).toBe('1,235');
 });
 
 it('pads cell voltages without inventing missing values or rounding tiny values to zero', () => {
@@ -31,4 +35,14 @@ it('pads cell voltages without inventing missing values or rounding tiny values 
  expect(format(0, 3, 3)).toBe('0,000');
  expect(format(null, 3, 3)).toBe('—');
  expect(format(0.0001, 3, 3)).toBe('1Е-4');
+});
+
+it('formats long history durations as exact grouped Ukrainian seconds',()=>{
+ for(const seconds of [2592000,31536000,12345678,0]) {
+  const text=historySeconds(seconds);
+  expect(text).not.toMatch(/[еe]/i);
+  expect(Number(text.replaceAll(/\s/g,''))).toBe(seconds);
+ }
+ expect(historySeconds(31536000)).toMatch(/^31\s536\s000$/);
+ expect(historySeconds(null)).toBe('—');
 });

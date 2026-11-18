@@ -3,11 +3,11 @@ import addFormats from 'ajv-formats';
 import schemas from './generated/schemas.json' with { type: 'json' };
 import type { components } from './generated/api';
 export type LatestResponse = components['schemas']['LatestResponse'];
-export type ErrorResponse = components['schemas']['ErrorResponse'];
+export type ErrorResponse = components['schemas']['ErrorResponse'] | components['schemas']['JbdErrorResponse'];
 const ajv = new Ajv2020({ strict: true, allErrors: true, coerceTypes: false });
 addFormats(ajv);
 export const validateLatest = ajv.compile<LatestResponse>({ ...schemas, $ref: '#/$defs/LatestResponse' });
-export const validateError = ajv.compile<ErrorResponse>({ ...schemas, $ref: '#/$defs/ErrorResponse' });
+export const validateError = ajv.compile<ErrorResponse>({ ...schemas, anyOf: [{ $ref: '#/$defs/ErrorResponse' }, { $ref: '#/$defs/JbdErrorResponse' }] });
 
 export type StreamState = components['schemas']['StreamState'];
 export type TelemetryEvent = components['schemas']['TelemetryEvent'];
@@ -16,3 +16,22 @@ const stateSchema = ajv.compile<StreamState>({ ...schemas, $ref: '#/$defs/Stream
 export function validateState(value: unknown): value is StreamState { return stateSchema(value) && (value.latest===null || value.latest.revision===value.revision); }
 export const validateEvent = ajv.compile<TelemetryEvent>({ ...schemas, $ref: '#/$defs/TelemetryEvent' });
 export const validateHistory = ajv.compile<HistoryResponse>({ ...schemas, $ref: '#/$defs/HistoryResponse' });
+
+export type HistoryRange = components['schemas']['HistoryRange'];
+export type HistorySeries = components['schemas']['HistorySeries'];
+export type RawHistorySeries = components['schemas']['RawHistorySeries'];
+export type AggregateHistorySeries = components['schemas']['AggregateHistorySeries'];
+export type HistoryBin = components['schemas']['HistoryBin'];
+export type HistoryMetricSummary = components['schemas']['HistoryMetricSummary'];
+export type HistoryUpdatedEvent = components['schemas']['HistoryUpdatedEvent'];
+export const validateHistorySeries = ajv.compile<HistorySeries>({ ...schemas, $ref: '#/$defs/HistorySeries' });
+export const validateHistoryUpdatedEvent = ajv.compile<HistoryUpdatedEvent>({ ...schemas, $ref: '#/$defs/HistoryUpdatedEvent' });
+
+export type ConfigurationState = components['schemas']['ConfigurationState'];
+export type ConfigurationRequest = components['schemas']['ConfigurationRequest'];
+export type ConfigurationSnapshot = components['schemas']['ConfigurationSnapshot'];
+export type ConfigurationUpdatedEvent = components['schemas']['ConfigurationUpdatedEvent'];
+export type JbdField = components['schemas']['JbdField'];
+export const validateConfigurationState = ajv.compile<ConfigurationState>({ ...schemas, $ref: '#/$defs/ConfigurationState' });
+export const validateConfigurationRequest = ajv.compile<ConfigurationRequest>({ ...schemas, $ref: '#/$defs/ConfigurationRequest' });
+export const validateConfigurationUpdatedEvent = ajv.compile<ConfigurationUpdatedEvent>({ ...schemas, $ref: '#/$defs/ConfigurationUpdatedEvent' });

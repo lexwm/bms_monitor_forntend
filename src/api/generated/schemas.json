@@ -131,8 +131,30 @@
             "null"
           ],
           "minimum": 0
+        },
+        "current_capacity_unit": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "enum": [
+            0.01,
+            0.1,
+            null
+          ],
+          "description": "Reported current/capacity decoding scale; absent or malformed source extension is null."
+        },
+        "firmware_raw": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 255,
+          "description": "Raw BMS software-version byte, not ESP32 firmware."
         }
-      }
+      },
+      "description": "Physical numeric output uses at most three fractional decimals. Nonzero values that would round to zero retain their value. Raw stored records and domain calculations are never rounded."
     },
     "LastValid": {
       "type": "object",
@@ -148,6 +170,16 @@
         },
         "battery": {
           "$ref": "#/$defs/Battery"
+        },
+        "jbd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JbdDetails"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -263,6 +295,31 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "jbd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JbdDetails"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accepted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "uptime_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       }
     },
@@ -373,6 +430,31 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "jbd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JbdDetails"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accepted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "uptime_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       }
     },
@@ -480,6 +562,31 @@
         },
         "revision": {
           "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "jbd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JbdDetails"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "accepted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "uptime_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0,
           "maximum": 9007199254740991
         }
@@ -1072,6 +1179,1350 @@
         "period_seconds": {
           "type": "number",
           "exclusiveMinimum": 0
+        }
+      }
+    },
+    "HistoryRange": {
+      "type": "string",
+      "enum": [
+        "10m",
+        "1h",
+        "12h",
+        "24h",
+        "30d",
+        "3mo",
+        "1y"
+      ]
+    },
+    "HistoryMetricSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "mean",
+        "min",
+        "max",
+        "observed_coverage_seconds",
+        "continuous",
+        "first_at",
+        "last_at",
+        "first_boot",
+        "last_boot"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "mean": {
+          "type": "number"
+        },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "observed_coverage_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "continuous": {
+          "type": "boolean"
+        },
+        "first_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "last_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "first_boot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_boot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "HistoryBin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "status",
+        "observed_coverage_seconds",
+        "power_w",
+        "current_a"
+      ],
+      "properties": {
+        "from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "to": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "pending"
+          ]
+        },
+        "observed_coverage_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "power_w": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HistoryMetricSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current_a": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HistoryMetricSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "RawHistorySeries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "range",
+        "from",
+        "to",
+        "period_seconds",
+        "source_revision",
+        "aggregate_revision",
+        "prepared_at",
+        "processing_status",
+        "observed_coverage_seconds",
+        "prepared_coverage_seconds",
+        "resolution_seconds",
+        "points",
+        "gaps"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "raw"
+        },
+        "range": {
+          "$ref": "#/$defs/HistoryRange"
+        },
+        "from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "to": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "period_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "source_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "aggregate_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "prepared_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "processing_status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "pending"
+          ]
+        },
+        "observed_coverage_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prepared_coverage_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "resolution_seconds": {
+          "type": "integer",
+          "const": 0
+        },
+        "points": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": {
+            "$ref": "#/$defs/HistoryPoint"
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 5001,
+          "items": {
+            "$ref": "#/$defs/Gap"
+          }
+        }
+      }
+    },
+    "AggregateHistorySeries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "range",
+        "from",
+        "to",
+        "period_seconds",
+        "source_revision",
+        "aggregate_revision",
+        "prepared_at",
+        "processing_status",
+        "observed_coverage_seconds",
+        "prepared_coverage_seconds",
+        "resolution_seconds",
+        "bins"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "aggregate"
+        },
+        "range": {
+          "$ref": "#/$defs/HistoryRange"
+        },
+        "from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "to": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "period_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "source_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "aggregate_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "prepared_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "processing_status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "pending"
+          ]
+        },
+        "observed_coverage_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "prepared_coverage_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "resolution_seconds": {
+          "type": "integer",
+          "enum": [
+            300,
+            3600,
+            21600,
+            86400
+          ]
+        },
+        "bins": {
+          "type": "array",
+          "maxItems": 1500,
+          "items": {
+            "$ref": "#/$defs/HistoryBin"
+          }
+        }
+      }
+    },
+    "HistorySeries": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RawHistorySeries"
+        },
+        {
+          "$ref": "#/$defs/AggregateHistorySeries"
+        }
+      ]
+    },
+    "HistoryUpdatedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "aggregate_revision",
+        "prepared_at"
+      ],
+      "properties": {
+        "schema": {
+          "type": "integer",
+          "const": 1
+        },
+        "aggregate_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "prepared_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "JbdField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "label_uk",
+        "raw_hex",
+        "value",
+        "candidate_value",
+        "unit",
+        "status",
+        "source",
+        "address"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "label_uk": {
+          "type": "string"
+        },
+        "raw_hex": {
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "candidate",
+            "unsupported",
+            "raw",
+            "invalid"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "address": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "JbdIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message_uk",
+        "slot"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message_uk": {
+          "type": "string"
+        },
+        "slot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "JbdDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data_status",
+        "fields",
+        "issues"
+      ],
+      "properties": {
+        "data_status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JbdField"
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JbdIssue"
+          }
+        }
+      }
+    },
+    "CaptureResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "status",
+        "raw_hex"
+      ],
+      "properties": {
+        "slot": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "verified",
+            "missing",
+            "timeout",
+            "error",
+            "unsupported",
+            "invalid",
+            "conflict"
+          ]
+        },
+        "raw_hex": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ConfigurationDecoded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "data_status",
+        "fields",
+        "slots",
+        "issues"
+      ],
+      "properties": {
+        "data_status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JbdField"
+          }
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CaptureResult"
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JbdIssue"
+          }
+        }
+      }
+    },
+    "ProfileSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "command",
+        "start_register",
+        "register_count"
+      ],
+      "properties": {
+        "slot": {
+          "type": "string"
+        },
+        "command": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "start_register": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "register_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "ConfigurationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "request_order",
+        "state",
+        "created_at",
+        "deadline_at",
+        "claimed_at",
+        "profile_id"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "request_order": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "completed",
+            "expired"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deadline_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "claimed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "profile_id": {
+          "type": "string",
+          "const": "configuration-v1"
+        }
+      }
+    },
+    "ConfigurationCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "request_hex",
+        "response_hex",
+        "transport_status",
+        "received_at"
+      ],
+      "properties": {
+        "slot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "request_hex": {
+          "type": "string",
+          "maxLength": 532,
+          "pattern": "^(?:[0-9A-Fa-f]{2})*$"
+        },
+        "response_hex": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 532,
+          "pattern": "^(?:[0-9A-Fa-f]{2})*$"
+        },
+        "transport_status": {
+          "type": "string",
+          "enum": [
+            "received",
+            "timeout",
+            "error"
+          ]
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "ConfigurationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "device_id",
+        "request_id",
+        "claim_token",
+        "capture_started_at",
+        "capture_finished_at",
+        "received_at",
+        "record"
+      ],
+      "properties": {
+        "schema": {
+          "type": "integer",
+          "const": 1
+        },
+        "device_id": {
+          "type": "string",
+          "const": "sacred-sun-monitor-01"
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "claim_token": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "capture_started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "capture_finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "captures"
+          ],
+          "properties": {
+            "captures": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "$ref": "#/$defs/ConfigurationCapture"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ConfigurationCreate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ConfigurationClaimInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_token"
+      ],
+      "properties": {
+        "claim_token": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "ConfigurationClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request",
+        "claim_token",
+        "profile"
+      ],
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/ConfigurationRequest"
+        },
+        "claim_token": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "profile": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProfileSlot"
+          },
+          "minItems": 7,
+          "maxItems": 7
+        }
+      }
+    },
+    "ConfigurationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "request_id",
+        "revision"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "stored",
+            "duplicate"
+          ]
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "ConfigurationUpdatedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "configuration_revision",
+        "server_time"
+      ],
+      "properties": {
+        "configuration_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "server_time": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "ConfigurationSnapshotMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "request_order",
+        "capture_started_at",
+        "capture_finished_at",
+        "received_at",
+        "accepted_at",
+        "data_status"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "request_order": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "capture_started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "capture_finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "accepted_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "data_status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        }
+      }
+    },
+    "ConfigurationSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "request_order",
+        "capture_started_at",
+        "capture_finished_at",
+        "received_at",
+        "accepted_at",
+        "data_status",
+        "decoded"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "request_order": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "capture_started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "capture_finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "accepted_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "data_status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "decoded": {
+          "$ref": "#/$defs/ConfigurationDecoded"
+        }
+      }
+    },
+    "ConfigurationState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "server_time",
+        "request",
+        "latest",
+        "previous_complete"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "server_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigurationRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigurationSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "previous_complete": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigurationSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ConfigurationSnapshotPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshots",
+        "next_before"
+      ],
+      "properties": {
+        "snapshots": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/ConfigurationSnapshotMetadata"
+          }
+        },
+        "next_before": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[1-9][0-9]{0,15}$"
+        }
+      }
+    },
+    "RecordMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id",
+        "boot_id",
+        "sequence",
+        "kind",
+        "valid",
+        "received_at",
+        "accepted_at",
+        "uptime_ms"
+      ],
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "const": "sacred-sun-monitor-01"
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "boot",
+            "measurement",
+            "event"
+          ]
+        },
+        "valid": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "accepted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "uptime_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "RecordList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "revision",
+        "records"
+      ],
+      "properties": {
+        "from": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "to": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": {
+            "$ref": "#/$defs/RecordMetadata"
+          }
+        }
+      }
+    },
+    "DetailedMeasurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "received_at",
+        "boot_id",
+        "sequence",
+        "valid",
+        "battery",
+        "ble_connected",
+        "accepted_at",
+        "uptime_ms",
+        "jbd"
+      ],
+      "properties": {
+        "received_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "valid": {
+          "type": "boolean"
+        },
+        "battery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Battery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ble_connected": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "accepted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "uptime_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "jbd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JbdDetails"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "One original measurement with bounded optional protocol decoding. Original numeric precision is retained in storage. Physical numeric presentation follows Battery; invalid/missing optional frames do not replace a valid battery with zero."
+    },
+    "DetailedHistoryResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "revision",
+        "points",
+        "gaps",
+        "observed_coverage_seconds",
+        "period_seconds"
+      ],
+      "properties": {
+        "from": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "to": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "points": {
+          "type": "array",
+          "maxItems": 5000,
+          "items": {
+            "$ref": "#/$defs/DetailedMeasurement"
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "maxItems": 5002,
+          "items": {
+            "$ref": "#/$defs/Gap"
+          }
+        },
+        "observed_coverage_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "period_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 21600
+        }
+      }
+    },
+    "DecodedRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metadata",
+        "measurement",
+        "jbd"
+      ],
+      "properties": {
+        "metadata": {
+          "$ref": "#/$defs/RecordMetadata"
+        },
+        "measurement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DetailedMeasurement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "jbd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JbdDetails"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "measurement is populated for measurement rows only, including invalid rows. jbd contains a separately supplied record.jbd_capture (for example AA counters), if present. Dynamic 03/04 decoding belongs to measurement.jbd. Unknown record additions are available only through view=raw."
+    },
+    "RawRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metadata",
+        "record"
+      ],
+      "properties": {
+        "metadata": {
+          "$ref": "#/$defs/RecordMetadata"
+        },
+        "record": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "description": "metadata describes the database observation. record is the complete original semantic source JSON, including unknown additions and original numeric digits. Returned directly from PostgreSQL JSON text without PHP decoding or presentation rounding. Original whitespace and property order are not retained."
+    },
+    "JbdErrorResponse": {
+      "type": "object",
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "no_measurements_yet",
+                "invalid_parameters",
+                "database_unavailable",
+                "invalid_source_data",
+                "not_found",
+                "method_not_allowed",
+                "internal_error",
+                "invalid_payload",
+                "payload_too_large",
+                "unsupported_media_type",
+                "record_conflict",
+                "range_too_dense",
+                "active_request",
+                "unknown_request",
+                "claim_conflict",
+                "snapshot_conflict",
+                "record_too_large"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            },
+            "active_request": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Existing active configuration request when error.code is active_request."
+            }
+          }
         }
       }
     }

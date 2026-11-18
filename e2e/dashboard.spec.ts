@@ -1,22 +1,22 @@
 import { test, expect } from '@playwright/test';
-import { validateState, validateHistory, type HistoryResponse } from '../src/api/validation';
+import { validateState, validateHistorySeries, type RawHistorySeries } from '../src/api/validation';
 
-function sampleHistory(): HistoryResponse {
+function sampleHistory(): RawHistorySeries {
  const start = Date.parse('2026-11-17T12:00:00Z');
  const stamp = (seconds: number) => new Date(start + seconds * 1000).toISOString();
- const points: HistoryResponse['points'] = [];
+ const points: RawHistorySeries['points'] = [];
  for (let seconds = 0; seconds < 600; seconds += 5) {
   if (seconds >= 240 && seconds < 300) continue;
   const power = Math.round(180 * Math.sin(seconds / 80) - 130);
   points.push({ received_at: stamp(seconds), boot_id: 'ffffffffffff0001', sequence: seconds, valid: true, power_w: seconds === 400 ? null : power, current_a: power / 26.4, soc_percent: 78 });
  }
- return { from: stamp(0), to: stamp(600), revision: 1, period_seconds: 600, observed_coverage_seconds: 540, points, gaps: [{ from: stamp(240), to: stamp(300) }] };
+ return { kind:'raw', range:'10m', resolution_seconds:0, aggregate_revision:0, prepared_at:null, processing_status:'ready', prepared_coverage_seconds:600, from: stamp(0), to: stamp(600), source_revision: 1, period_seconds: 600, observed_coverage_seconds: 540, points, gaps: [{ from: stamp(240), to: stamp(300) }] };
 }
 
 test('dashboard preserves real gaps, metric nulls and approved responsive layout', async ({ page }, testInfo) => {
  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
- const history = sampleHistory(); expect(validateHistory(history)).toBe(true);
- await page.route('**/api/v1/battery/history?*', route => route.fulfill({ json: history }));
+ const history = sampleHistory(); expect(validateHistorySeries(history)).toBe(true);
+ await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: history }));
  await page.goto('/');
  const power = page.getByRole('region', { name: 'Історія потужності', exact: true });
  const current = page.getByRole('region', { name: 'Історія струму', exact: true });
@@ -49,7 +49,7 @@ test('missing readings and empty history never appear as zero measurements', asy
  expect(validateState(empty)).toBe(true);
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: empty }));
  const history = sampleHistory();
- await page.route('**/api/v1/battery/history?*', route => route.fulfill({ json: { ...history, points: [], observed_coverage_seconds: 0, gaps: [{ from: history.from, to: history.to }] } }));
+ await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: { ...history, points: [], observed_coverage_seconds: 0, gaps: [{ from: history.from, to: history.to }] } }));
  await page.goto('/');
  await expect(page.getByRole('img', { name: 'Заряд невідомий' })).toBeVisible();
  await expect(page.getByTestId('power-value')).toContainText('—');
@@ -63,7 +63,7 @@ test('missing readings and empty history never appear as zero measurements', asy
 
 test('history failure retains a clearly labelled snapshot', async ({ page }) => {
  let failed = false;
- await page.route('**/api/v1/battery/history?*', route => route.fulfill(failed ? { status: 503, json: { error: { code: 'database_unavailable', message: 'Unavailable' } } } : { json: sampleHistory() }));
+ await page.route('**/api/v1/battery/history/series?*', route => route.fulfill(failed ? { status: 503, json: { error: { code: 'database_unavailable', message: 'Unavailable' } } } : { json: sampleHistory() }));
  await page.goto('/'); await expect(page.getByTestId('history-segment')).toHaveCount(5);
  failed = true; await page.getByRole('button', { name: 'Оновити знімок' }).click();
  await expect(page.getByText('Не вдалося оновити історію. Збережений знімок може бути застарілим.', { exact: true })).toBeVisible();

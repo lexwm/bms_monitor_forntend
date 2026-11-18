@@ -1,5 +1,5 @@
 import { expect, test, type Page, type APIRequestContext } from '@playwright/test';
-import { validateState, validateEvent, type StreamState, type HistoryResponse } from '../src/api/validation';
+import { validateState, validateEvent, type StreamState, type RawHistorySeries } from '../src/api/validation';
 
 async function initialState(request: APIRequestContext): Promise<StreamState> {
  const raw: unknown = await (await request.get('/api/v1/telemetry/state')).json();
@@ -7,9 +7,9 @@ async function initialState(request: APIRequestContext): Promise<StreamState> {
  const now = new Date().toISOString();
  return { ...raw, server_time: now, latest: { ...raw.latest, state: 'fresh', valid: true, stale: false, reason: null, last_valid: null, mode: 'discharge', received_at: now, server_time: now, age_seconds: 0, battery: raw.latest.battery } };
 }
-function sampleHistory(): HistoryResponse {
+function sampleHistory(): RawHistorySeries {
  const to = Date.now(); const stamp = (offset: number) => new Date(to + offset).toISOString();
- return { from: stamp(-600000), to: stamp(0), revision: 1, period_seconds: 600, observed_coverage_seconds: 10, gaps: [{ from: stamp(-590000), to: stamp(0) }], points: [0, 5000].map(offset => ({ received_at: stamp(-600000 + offset), boot_id: 'ffffffffffff0001', sequence: offset, valid: true, current_a: -0.04, power_w: -1, soc_percent: 58 })) };
+ return { kind:'raw', range:'10m', resolution_seconds:0, aggregate_revision:0, prepared_at:null, processing_status:'ready', prepared_coverage_seconds:600, from: stamp(-600000), to: stamp(0), source_revision: 1, period_seconds: 600, observed_coverage_seconds: 10, gaps: [{ from: stamp(-590000), to: stamp(0) }], points: [0, 5000].map(offset => ({ received_at: stamp(-600000 + offset), boot_id: 'ffffffffffff0001', sequence: offset, valid: true, current_a: -0.04, power_w: -1, soc_percent: 58 })) };
 }
 async function streamStub(page: Page) {
  await page.addInitScript(() => {
@@ -44,7 +44,7 @@ for (const width of [320, 390, 600, 1440]) {
   await page.setViewportSize({ width, height: 900 }); await page.emulateMedia({ reducedMotion: 'reduce' }); await streamStub(page);
   let state = await initialState(request); let failApi = false;
   await page.route('**/api/v1/telemetry/state', route => route.fulfill(failApi ? { status: 503, json: { error: { code: 'database_unavailable', message: 'Unavailable' } } } : { json: state }));
-  await page.route('**/api/v1/battery/history?*', route => route.fulfill({ json: sampleHistory() }));
+  await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
   await page.goto('/'); await expect(page.getByTestId('history-segment')).toHaveCount(2);
   await expect(page.getByRole('img', { name: 'Заряд 58 відсотків' })).toHaveAccessibleDescription(/Розряджання/);
   const baseline = await geometry(page);
@@ -95,7 +95,7 @@ test('history loading, missing series and errors retain the same chart scaffold'
  const state = await initialState(request); const history = sampleHistory(); let failure = false; let empty = false;
  let release = () => {}; const gate = new Promise<void>(resolve => { release = resolve; });
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history?*', async route => { await gate; await route.fulfill(failure ? { status: 503, json: { error: { code: 'database_unavailable', message: 'Unavailable' } } } : { json: empty ? { ...history, points: [], observed_coverage_seconds: 0, gaps: [{ from: history.from, to: history.to }] } : history }); });
+ await page.route('**/api/v1/battery/history/series?*', async route => { await gate; await route.fulfill(failure ? { status: 503, json: { error: { code: 'database_unavailable', message: 'Unavailable' } } } : { json: empty ? { ...history, points: [], observed_coverage_seconds: 0, gaps: [{ from: history.from, to: history.to }] } : history }); });
  await page.goto('/'); await expect(page.getByText('Завантажуємо історію…', { exact: true })).toHaveCount(2);
  await expect(page.getByRole('img', { name: 'Заряд 58 відсотків' })).toBeVisible(); const baseline = await geometry(page);
  release(); await expect(page.getByTestId('history-segment')).toHaveCount(2); await expectStable(page, baseline);
@@ -111,7 +111,7 @@ test('battery states explain available evidence and all interface text is Ukrain
  let state = await initialState(request);
  let apiError: string | null = null;
  await page.route('**/api/v1/telemetry/state', route => route.fulfill(apiError ? { status: 503, json: { error: { code: apiError, message: 'This server message must never be displayed' } } } : { json: state }));
- await page.route('**/api/v1/battery/history?*', route => route.fulfill({ json: sampleHistory() }));
+ await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
  await page.goto('/');
  await expect(page.locator('html')).toHaveAttribute('lang', 'uk');
  await expect(page).toHaveTitle('Монітор батареї');
@@ -160,7 +160,7 @@ test('fractional charge stays inside the fixed indicator', async ({ page, reques
  await streamStub(page); await page.emulateMedia({ reducedMotion: 'reduce' });
  let state = await initialState(request);
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history?*', route => route.fulfill({ json: sampleHistory() }));
+ await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
  await page.goto('/'); await expect(page.getByRole('img', { name: 'Заряд 58 відсотків' })).toBeVisible();
  const baseline = await geometry(page);
  const percentX = await page.locator('.soc small').evaluate(node => node.getBoundingClientRect().x);
@@ -184,7 +184,7 @@ test('last valid time follows a valid latest reading and the invalid fallback', 
  if (!latest?.battery) throw new Error('Missing fixture');
  const lastValidAt = new Date(Date.parse(latest.received_at) - 60000).toISOString();
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history?*', route => route.fulfill({ json: sampleHistory() }));
+ await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
  await page.goto('/'); await expect(page.getByRole('img', { name: 'Заряд 58 відсотків' })).toBeVisible();
  await page.getByText('Про дані та час вимірювань', { exact: true }).click();
  const note = page.locator('.data-details .notice');
@@ -210,10 +210,10 @@ test('tooltips and chart descriptions preserve Ukrainian numeric values', async 
  const original = sampleHistory();
  let history = { ...original, points: original.points.map((point, index) => ({ ...point, power_w: index === 0 ? -50 : 20, current_a: null })) };
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history?*', route => route.fulfill({ json: history }));
+ await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: history }));
  await page.goto('/');
  await expect(page.getByTestId('current-value').locator('.numeric-reading')).toHaveAttribute('title', '0,04 А');
- await expect(page.locator('.cell-reading').first()).toHaveAttribute('title', '3,31234 В');
+ await expect(page.locator('.cell-reading').first()).toHaveAttribute('title', '3,312 В');
  await expect(page.locator('.temp-row strong').first()).toHaveAttribute('title', '22,567 °C');
  await expect(page.locator('.temp-top .numeric-reading')).toHaveAttribute('title', '22,567 °C');
  await expect(page.getByRole('img', { name: 'Історія потужності. Виміряних точок: 2. Потужність, Вт: від -50 до 20. Проміжків без вимірювань: 1' })).toBeVisible();
@@ -222,7 +222,7 @@ test('tooltips and chart descriptions preserve Ukrainian numeric values', async 
  if (!currentLatest?.battery) throw new Error('Missing fixture');
  state = { ...state, latest: { ...currentLatest, battery: { ...currentLatest.battery, current_a: 1.23456789e-19 } } };
  await page.getByRole('button', { name: 'Оновити знімок' }).click();
- await expect(page.getByTestId('current-value').locator('.numeric-reading')).toHaveAttribute('title', /1,23456789[ЕE]-19 А/);
+ await expect(page.getByTestId('current-value').locator('.numeric-reading')).toHaveAttribute('title', /1,235[ЕE]-19 А/);
  history = { ...history, points: [] };
  await page.getByRole('button', { name: 'Оновити знімок' }).click();
  await expect(page.getByRole('img', { name: 'Історія потужності. Виміряних точок: 0. Немає значень показника за цей період. Проміжків без вимірювань: 1' })).toBeVisible();
@@ -235,7 +235,7 @@ test('horizontal cells use two rows of four with stable centered readings inside
  if (!latest?.battery) throw new Error('Missing fixture');
  state = { ...state, latest: { ...latest, battery: { ...latest.battery, cells_v: [3.3, 3.301, 3.298, 3.3, 3.304, 3.3, 3.299, 3.3] } } };
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history?*', route => route.fulfill({ json: sampleHistory() }));
+ await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
  await page.goto('/');
  await expect(page.locator('.cell-reading strong').first()).toContainText('3,3');
  await expect(page.locator('.cell-body > .cell-reading')).toHaveCount(8);
