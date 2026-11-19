@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTelemetry } from './useTelemetry';
 import { format, time, clockTime, historySeconds } from './format';
 import { SocIndicator } from './components/SocIndicator';
@@ -11,7 +11,19 @@ const errorText: Record<string, string> = {
  no_measurements_yet: 'Вимірювань поки немає', database_unavailable: 'База даних недоступна',
  invalid_source_data: 'Джерело передало некоректні дані', incompatible_response: 'Сервер надіслав дані в непідтримуваному форматі',
 };
+const currentPage = () => location.hash === '#configuration' ? 'configuration' : 'overview';
 export function App() {
+ const [page, setPage] = useState(currentPage);
+ useEffect(() => {
+  const change = () => setPage(currentPage());
+  addEventListener('hashchange', change);
+  return () => removeEventListener('hashchange', change);
+ }, []);
+ // Sections of the overview are rendered only on that page, so the browser cannot scroll to them itself.
+ useEffect(() => {
+  if (page === 'configuration') scrollTo(0, 0);
+  else if (location.hash.length > 1) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+ }, [page]);
  const { state, error, streamProblem, history, historyError, historyLoading, range, selectRange, age, refresh, configuration } = useTelemetry();
  const [menuOpen, setMenuOpen] = useState(false);
  const menuButton = useRef<HTMLButtonElement>(null);
@@ -44,7 +56,8 @@ export function App() {
    <div className="brand"><button ref={menuButton} type="button" className="menu-toggle" aria-label={menuOpen ? 'Закрити меню' : 'Відкрити меню'} aria-expanded={menuOpen} aria-controls="main-menu" onClick={() => setMenuOpen(!menuOpen)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M4 6h16M4 12h11M4 18h16"/></svg></button><a className="brand-link" href="#overview"><span className="brand-name">Монітор <span>батареї</span></span><span className="brand-sub">8 комірок · літій-залізо-фосфатна</span></a></div>
    <div className="header-right"><span className="demo-tag" style={{ visibility: data?.data_source === 'synthetic' ? 'visible' : 'hidden' }}>Тестові дані</span><span className="time">{data ? clockTime(data.received_at) : '—'} · Київ</span></div>
   </header>
-  <nav id="main-menu" className="drawer" aria-label="Головне меню" hidden={!menuOpen}><div className="drawer-head">МОНІТОР БАТАРЕЇ<button type="button" aria-label="Закрити навігацію" onClick={closeMenu}>×</button></div><a href="#overview" onClick={closeMenu}>Огляд</a><a href="#history" onClick={closeMenu}>Історія</a><a href="#data-details" onClick={closeMenu}>Про дані</a></nav>
+  <nav id="main-menu" className="drawer" aria-label="Головне меню" hidden={!menuOpen}><div className="drawer-head">МОНІТОР БАТАРЕЇ<button type="button" aria-label="Закрити навігацію" onClick={closeMenu}>×</button></div><a href="#overview" onClick={closeMenu}>Огляд</a><a href="#history" onClick={closeMenu}>Історія</a><a href="#data-details" onClick={closeMenu}>Про дані</a><a href="#configuration" className={page === 'configuration' ? 'active' : undefined} aria-current={page === 'configuration' ? 'page' : undefined} onClick={closeMenu}>Налаштування батареї</a></nav>
+  {page === 'configuration' ? <ConfigurationPanel configuration={configuration}/> : <>
   <section className={`status-bar ${healthy ? 'good' : 'neutral'}`} role="status" aria-live="polite"><span><i className="status-dot"/><strong>{title}</strong></span><span>{age === null ? 'Очікуємо дані' : `Вік даних: ${Math.floor(age)} с`}</span></section>
   <div className="status-context"><p className="notice">{contextNote}</p><p className="stream-note">{streamProblem ? 'Канал оновлень відновлюється. Вік даних зростає.' : 'Нові показання з’являться автоматично.'}</p></div>
   <div className="grid" id="overview">
@@ -78,8 +91,8 @@ export function App() {
    <HistoryChart title="Історія струму" metric="current_a" unit="Струм, А" history={history} failed={historyError}/>
    <section className="panel quality"><div className="panel-head"><h2 className="panel-title">Повнота історії</h2><span className="micro">{history ? historyRangeLabel(history.range) : '—'}</span></div><div className="quality-value">{format(coverage)}<span>%</span></div><div className="quality-track" aria-hidden="true"><span style={{ width: `${coverage ?? 0}%` }}/></div><div className="quality-summary"><p className="quality-copy">Спостерігалося {historySeconds(history?.observed_coverage_seconds)} із {historySeconds(history?.period_seconds)} секунд.<br/>Проміжків без вимірювань: {history?.kind==='raw' ? history.gaps.length : '—'}.<br/>Станом на {history ? time(history.to) : '—'} (Київ).<br/>{history?.processing_status==='pending' ? `Історія готується. Підготовлено ${historySeconds(history.prepared_coverage_seconds)} із ${historySeconds(history.period_seconds)} секунд.` : history?.kind==='aggregate' ? 'Межі коротких пропусків у зведених інтервалах невідомі.' : ''}</p></div><p className="history-warning">{historyError ? 'Не вдалося оновити історію. Збережений знімок може бути застарілим.' : historyLoading ? `Оновлюємо історію · ${historyRangeLabel(range)}. Показано попередній знімок.` : history ? 'Знімок історії на момент оновлення.' : 'Знімок історії ще не отримано.'}</p><p className="quality-copy">Пропуски не замінюються нулями. Покриття вимірювань не означає безперервну роботу батареї.</p><button type="button" className="refresh-button" onClick={refresh}>Оновити знімок</button></section>
   </div>
-  <ConfigurationPanel configuration={configuration}/>
   <details className="data-details" id="data-details"><summary>Про дані та час вимірювань</summary><dl><div><dt>Отримано джерелом</dt><dd>{data ? time(data.received_at) : '—'}</dd></div><div><dt>Точний час вимірювання</dt><dd>Невідомо</dd></div><div><dt>Час стану від сервера</dt><dd>{state ? time(state.server_time) : '—'}</dd></div><div><dt>Напруга батареї</dt><dd>{format(battery?.voltage_v, 2)} В</dd></div></dl><p className="notice">Останнє коректне вимірювання: {lastValidAt ? time(lastValidAt) : '—'}.</p><p>Історія оновлюється після нових даних, зміни періоду або відновлення зв’язку. Підготовка зведеної історії показується окремо від пропусків вимірювань. Поточні показання оновлюються за повідомленнями сервера. Розрив лінії також означає відсутність значення окремого показника.</p></details>
+  </>}
   <footer className="footer"><span>МОНІТОР БАТАРЕЇ / ПОКАЗАННЯ БАТАРЕЇ</span><span>Час: Київ · поточні показання від сервера</span></footer>
  </div></main>;
 }
