@@ -68,11 +68,11 @@ test('successful resync clears a malformed event warning but not a broken transp
  const baseline=requests;await emit(page,{schema:999});await expect.poll(()=>requests).toBe(baseline+1);
  await emit(page,eventFor(initial));
  await expect(page.getByRole('img',{name:'Заряд 77 відсотків'})).toBeVisible();
- await expect(page.getByText('Канал оновлень відновлюється.',{exact:false})).toHaveCount(0);
+ await expect(page.getByText('Канал оновлень відновлюється',{exact:false})).toHaveCount(0);
  await page.evaluate(()=>window.dispatchEvent(new Event('test-error')));
  await page.getByRole('button',{name:'Оновити знімок'}).click();
  await expect.poll(()=>requests).toBe(baseline+2);
- await expect(page.getByText('Канал оновлень відновлюється.',{exact:false})).toBeVisible();
+ await expect(page.getByText('Канал оновлень відновлюється',{exact:false})).toBeVisible();
 });
 
 test('opening the stream resyncs a measurement published after the bootstrap snapshot',async({page,request})=>{

@@ -250,7 +250,8 @@ test('settings are a separate page opened from the menu, grouped into tabs witho
  await expect(panel(page).getByRole('tabpanel')).toContainText('FA · 999');
  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
  await page.getByRole('button', { name: 'Відкрити меню' }).click();
- await page.getByRole('navigation', { name: 'Головне меню' }).getByRole('link', { name: 'Історія', exact: true }).click();
+ await expect(page.getByRole('navigation', { name: 'Головне меню' }).getByRole('link')).toHaveText(['Огляд', 'Налаштування батареї']);
+ await page.getByRole('navigation', { name: 'Головне меню' }).getByRole('link', { name: 'Огляд', exact: true }).click();
  await expect(page.getByTestId('current-value')).toBeVisible();
  await expect(panel(page)).toHaveCount(0);
  await expect(page.locator('html')).toHaveAttribute('data-stream-count', '1');

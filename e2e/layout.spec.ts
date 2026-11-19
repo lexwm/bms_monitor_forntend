@@ -82,11 +82,13 @@ for (const width of [320, 390, 600, 1440]) {
   let revision = state.revision + 1;
   state = { ...state, revision, latest: { ...state.latest, revision, received_at: new Date(Date.now() - 60000).toISOString(), battery: originalBattery } };
   await emit(page, state); await expect(page.getByRole('status')).toContainText('Немає нових вимірювань'); await expectStable(page, baseline);
-  await page.evaluate(() => window.dispatchEvent(new Event('layout-error'))); await expect(page.getByText('Канал оновлень відновлюється.', { exact: false })).toBeVisible(); await expectStable(page, baseline);
+  await page.evaluate(() => window.dispatchEvent(new Event('layout-error'))); await expect(page.getByText('Канал оновлень відновлюється', { exact: false })).toBeVisible(); await expectStable(page, baseline);
   failApi = true; await page.getByRole('button', { name: 'Оновити знімок' }).evaluate(button => { if (button instanceof HTMLButtonElement) button.click(); });
   await expect(page.getByRole('status')).toContainText('База даних недоступна'); await expectStable(page, baseline);
   revision = state.revision + 1; state = { ...state, revision, latest: null };
   await emit(page, state); await expect(page.getByRole('img', { name: 'Заряд невідомий' })).toBeVisible(); await expectStable(page, baseline);
+  await expect(page.getByTestId('cycles-value')).toContainText('—');
+  await expect(page.getByTestId('estimate-value')).toHaveText('—');
  });
 }
 
@@ -116,6 +118,9 @@ test('battery states explain available evidence and all interface text is Ukrain
  await expect(page.locator('html')).toHaveAttribute('lang', 'uk');
  await expect(page).toHaveTitle('Монітор батареї');
  await expect(page.locator('.mode-label')).toHaveText('↘ Розряджання');
+ await expect(page.getByTestId('cycles-value')).toContainText(String(state.latest?.battery?.cycles));
+ await expect(page.getByTestId('estimate-value')).toHaveText(/^\d+ год \d+ хв$/);
+ await expect(page.getByRole('region', { name: 'Розрахунковий час', exact: true })).toContainText('До повного розряду');
  const baseline = await geometry(page);
  const latest = state.latest;
  if (!latest?.battery) throw new Error('Missing fixture');

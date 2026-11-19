@@ -54,7 +54,7 @@ frontend/
 | `/api/*` | Backend PHP-FPM; не заменять ответы на index.html |
 | `GET /.well-known/mercure` | Нативный Mercure hub; query сохраняется, буферизация/кеш отключены |
 
-Для index.html — перепроверка кеша при открытии (`Cache-Control: no-cache`). Для файлов с хешем в assets допустим длительный immutable-кеш. SSE — длительное соединение с heartbeat, а не обычный короткий HTTP-ответ; POST к публичному пути Mercure не разрешать. Подробности переменных, сервера и издателя — `backend/docs/deployment.md` в отдельном backend checkout.
+Для index.html — перепроверка кеша при открытии (`Cache-Control: no-cache`). Для файлов с хешем в assets допустим длительный immutable-кеш. Значок сайта и манифест (`assets/favicon.svg`, `assets/apple-touch-icon.png`, `assets/icon-192.png`, `assets/icon-512.png`, `assets/manifest.webmanifest`) лежат там же без хеша в имени: их отдаёт существующий маршрут `/assets/*`, но immutable-кеш к ним применять нельзя. SSE — длительное соединение с heartbeat, а не обычный короткий HTTP-ответ; POST к публичному пути Mercure не разрешать. Подробности переменных, сервера и издателя — `backend/docs/deployment.md` в отдельном backend checkout.
 
 ## Поведение и проверка
 
