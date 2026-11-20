@@ -1,19 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiFailure, fetchValidated } from './api/client';
-import { validateState, validateEvent, validateHistorySeries, validateHistoryUpdatedEvent, validateConfigurationUpdatedEvent, type StreamState, type TelemetryEvent, type HistorySeries, type HistoryRange } from './api/validation';
+import { validateState, validateEvent, validateHistoryUpdatedEvent, validateConfigurationUpdatedEvent, type StreamState, type TelemetryEvent } from './api/validation';
 import { ageAt, newer } from './api/stream';
-import { HistoryRefresh } from './historyRefresh';
 import { useConfiguration } from './useConfiguration';
+
+// The single EventSource stays here; history consumers only receive its signals and own their requests.
+export type TelemetrySignal = { kind: 'measurement' } | { kind: 'prepared'; revision: number } | { kind: 'recover' } | { kind: 'visibility'; hidden: boolean };
+export class TelemetrySignals {
+ private readonly listeners = new Set<(signal: TelemetrySignal) => void>();
+ subscribe(listener: (signal: TelemetrySignal) => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
+ emit(signal: TelemetrySignal) { for (const listener of [...this.listeners]) listener(signal); }
+}
 export function useTelemetry() {
+ const [signals] = useState(() => new TelemetrySignals());
  const configuration = useConfiguration();
  const [state, setState] = useState<StreamState | null>(null);
  const [error, setError] = useState<string | null>(null);
  const [streamProblem, setStreamProblem] = useState(false);
- const [history, setHistory] = useState<HistorySeries | null>(null);
- const [historyError, setHistoryError] = useState(false);
- const [historyLoading, setHistoryLoading] = useState(true);
- const [range, setRange] = useState<HistoryRange>('10m');
- const selectRequest = useRef<(range: HistoryRange) => void>(() => {});
  const refreshRequest = useRef<() => void>(() => {});
  const [age, setAge] = useState<number | null>(null);
  useEffect(() => {
@@ -22,56 +25,34 @@ export function useTelemetry() {
   let buffered: TelemetryEvent | null = null;
   let anchorServer = 0; let anchorLocal = 0;
   let recovery: AbortController | null = null;
-  let historyRequest: AbortController | null = null;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let recovering = true; let failures = 0; let invalidResyncUsed=false;
   let invalidConfigurationResyncUsed = false;
   let clockReady=false; let transportDown=false;
-  let selected: HistoryRange='10m'; let generation=0; let aggregateRevision=-1;
-  const historyRefresh=new HistoryRefresh(() => { void refreshHistory(); });
-  historyRefresh.visibility(document.hidden);
+  let aggregateRevision=-1;
   const source = new EventSource('/.well-known/mercure?topic=' + encodeURIComponent('urn:bms:battery:sacred-sun-monitor-01'));
   function tick() {
    const latest=current?.latest;
    setAge(latest ? ageAt(latest.received_at, anchorServer + performance.now() - anchorLocal) : null);
   }
-  async function refreshHistory() {
-   historyRequest?.abort(); const controller=new AbortController(); historyRequest=controller;
-   const requestGeneration=++generation; const requestedRange=selected;
-   setHistoryLoading(true);
-   try {
-    const data=await fetchValidated('/api/v1/battery/history/series?' + new URLSearchParams({range:requestedRange}),validateHistorySeries,controller.signal);
-    if(data.range!==requestedRange)throw new ApiFailure('incompatible_response');
-    if (active && !controller.signal.aborted && requestGeneration===generation) {
-     setHistory(data); setHistoryError(false); aggregateRevision=Math.max(aggregateRevision,data.aggregate_revision);
-    }
-   } catch { if(active && !controller.signal.aborted && requestGeneration===generation)setHistoryError(true); }
-   finally {
-    if(active && requestGeneration===generation) { setHistoryLoading(false); historyRefresh.complete(); }
-   }
-  }
-  selectRequest.current=(next) => {
-   if(next===selected)return;
-   selected=next; setRange(next); historyRefresh.immediate(next);
-  };
   function applyEvent(event: TelemetryEvent) {
    if (!newer(current,event)) return;
    const jumped=current!==null && event.revision>current.revision+1;
    current={schema:1, revision:event.revision, server_time:event.server_time, latest:event.latest, topic:'urn:bms:battery:sacred-sun-monitor-01',hub_url:'/.well-known/mercure'};
    // Bootstrap clock stays authoritative: a delayed/replayed event never becomes fresh on arrival.
    setState(current); tick();
-   if(jumped || event.history_changed)historyRefresh.signal();
+   if(jumped || event.history_changed)signals.emit({kind:'measurement'});
   }
   async function recover(refreshHistory=true) {
    if(!active)return;
    // History has its own endpoint and remains recoverable if the state endpoint fails.
-   if(refreshHistory)historyRefresh.immediate();
+   if(refreshHistory)signals.emit({kind:'recover'});
    recovery?.abort(); clearTimeout(retry);
    const controller=new AbortController(); recovery=controller; recovering=true;
    try {
     const data=await fetchValidated('/api/v1/telemetry/state',validateState,controller.signal);
     if(!active || controller.signal.aborted)return;
-    anchorServer=Date.parse(data.server_time); anchorLocal=performance.now(); clockReady=true; historyRefresh.visibility(document.hidden);
+    anchorServer=Date.parse(data.server_time); anchorLocal=performance.now(); clockReady=true;
     if(current===null || data.revision>=current.revision) { current=data; setState(data); }
     failures=0; setError(null); recovering=false; setStreamProblem(transportDown);
     const pending=buffered; buffered=null;
@@ -110,7 +91,7 @@ export function useTelemetry() {
     return;
    }
    if(value.aggregate_revision>aggregateRevision) {
-    aggregateRevision=value.aggregate_revision; historyRefresh.signal();
+    aggregateRevision=value.aggregate_revision; signals.emit({kind:'prepared',revision:value.aggregate_revision});
    }
   });
   source.addEventListener('configuration.updated.v1', (message: MessageEvent<string>) => {
@@ -122,11 +103,12 @@ export function useTelemetry() {
   });
   // Also bootstrap when the hub is unavailable; opening later triggers a fresh snapshot.
   refreshRequest.current=() => { failures=0; void recover(); };
-  void recover();
+  // Consumers load their own first snapshot when they mount.
+  void recover(false);
   const timer=setInterval(tick,1000);
-  const visible=() => { historyRefresh.visibility(document.hidden); if(document.hidden) { historyRequest?.abort(); generation++; setHistoryLoading(false); historyRefresh.complete(); } else { failures=0; configuration.recover(); void recover(); } };
+  const visible=() => { signals.emit({kind:'visibility',hidden:document.hidden}); if(!document.hidden) { failures=0; configuration.recover(); void recover(); } };
   document.addEventListener('visibilitychange',visible);
-  return () => { active=false; refreshRequest.current=() => {}; selectRequest.current=() => {}; historyRefresh.dispose(); source.close(); clearInterval(timer);clearTimeout(retry);recovery?.abort();historyRequest?.abort();document.removeEventListener('visibilitychange',visible); };
- },[]);
- return {state,error,streamProblem,history,historyError,historyLoading,range,selectRange:(next: HistoryRange)=>selectRequest.current(next),age,refresh:()=>refreshRequest.current(),configuration};
+  return () => { active=false; refreshRequest.current=() => {}; source.close(); clearInterval(timer);clearTimeout(retry);recovery?.abort();document.removeEventListener('visibilitychange',visible); };
+ },[signals]);
+ return {state,error,streamProblem,age,refresh:()=>refreshRequest.current(),configuration,signals};
 }

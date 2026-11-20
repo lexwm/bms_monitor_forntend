@@ -1109,6 +1109,46 @@
           ],
           "minimum": 0,
           "maximum": 100
+        },
+        "voltage_v": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Present only in history series with set=overview."
+        },
+        "temperatures_c": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 16,
+          "items": {
+            "type": "number"
+          },
+          "description": "Present only in history series with set=overview."
+        },
+        "cells_v": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "minItems": 8,
+          "maxItems": 8,
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "description": "Present only in history series with set=cells."
+        },
+        "cell_delta_mv": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Present only in history series with set=cells."
         }
       }
     },
@@ -1311,6 +1351,94 @@
               "type": "null"
             }
           ]
+        },
+        "detail_status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "pending"
+          ],
+          "description": "Present only with set=overview|cells. pending means the additional values are still being prepared; it is never an empty interval. A pending interval status implies pending detail."
+        },
+        "detail": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HistoryDetailContinuity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present only with set=overview|cells; null while detail_status is pending."
+        },
+        "soc_percent": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HistoryCompactSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "set=overview; null when pending or without values."
+        },
+        "voltage_v": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HistoryCompactSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "set=overview; null when pending or without values."
+        },
+        "temperatures_c": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 16,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/HistoryCompactSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "set=overview; one entry per sensor index up to the highest present index, null for an index without values. Null when pending."
+        },
+        "cells_v": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 8,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/HistoryCompactSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "set=cells; one entry per cell index up to the highest present index, null for an index without values. Null when pending."
+        },
+        "cell_delta_mv": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HistoryCompactSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "set=cells; null when pending or without values."
         }
       }
     },
@@ -1494,6 +1622,19 @@
           "items": {
             "$ref": "#/$defs/HistoryBin"
           }
+        },
+        "detail_processing_status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "pending"
+          ],
+          "description": "Present only with set=overview|cells: ready when every interval has detail."
+        },
+        "detail_prepared_coverage_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Present only with set=overview|cells: total duration of intervals whose detail is ready."
         }
       }
     },
@@ -2523,6 +2664,304 @@
               "description": "Existing active configuration request when error.code is active_request."
             }
           }
+        }
+      }
+    },
+    "HistorySet": {
+      "type": "string",
+      "enum": [
+        "basic",
+        "overview",
+        "cells"
+      ],
+      "description": "basic keeps the original response. overview adds soc_percent, voltage_v and temperatures_c; cells adds cells_v and cell_delta_mv."
+    },
+    "HistoryCompactSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "mean",
+        "min",
+        "max"
+      ],
+      "description": "Sample-weighted summary of one additional metric inside one interval. Continuity is shared, see HistoryDetailContinuity.",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "mean": {
+          "type": "number"
+        },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        }
+      }
+    },
+    "HistoryDetailContinuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "observed_coverage_seconds",
+        "continuous",
+        "first_at",
+        "last_at",
+        "first_boot",
+        "last_boot"
+      ],
+      "description": "Valid-measurement continuity shared by all additional metrics of one interval.",
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "observed_coverage_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "continuous": {
+          "type": "boolean"
+        },
+        "first_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "last_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "first_boot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_boot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "EnergyRange": {
+      "type": "string",
+      "enum": [
+        "30d",
+        "3mo",
+        "1y"
+      ]
+    },
+    "EnergyDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "date",
+        "day_seconds",
+        "observed_coverage_seconds",
+        "charged_wh",
+        "discharged_wh",
+        "status"
+      ],
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date",
+          "description": "Europe/Kyiv calendar day."
+        },
+        "day_seconds": {
+          "type": "integer",
+          "enum": [
+            82800,
+            86400,
+            90000
+          ]
+        },
+        "observed_coverage_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Coverage of prepared intervals with detail only."
+        },
+        "charged_wh": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Registered charging energy, Wh; null when observed coverage is zero."
+        },
+        "discharged_wh": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Registered discharging energy, Wh; null when observed coverage is zero."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "partial",
+            "outside"
+          ],
+          "description": "outside: the whole day precedes prepared history. ready: the whole day is prepared, unmarked and has detail. Otherwise partial; the current day is always partial."
+        }
+      }
+    },
+    "EnergyDaily": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "range",
+        "time_zone",
+        "as_of",
+        "prepared_from",
+        "days"
+      ],
+      "properties": {
+        "range": {
+          "$ref": "#/$defs/EnergyRange"
+        },
+        "time_zone": {
+          "type": "string",
+          "const": "Europe/Kyiv"
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "prepared_from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Lower bound of verified prepared history; null before preparation starts."
+        },
+        "days": {
+          "type": "array",
+          "maxItems": 400,
+          "items": {
+            "$ref": "#/$defs/EnergyDay"
+          }
+        }
+      }
+    },
+    "BatteryEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "occurred_at",
+        "boot_id",
+        "sequence",
+        "kind",
+        "bit",
+        "label",
+        "severity",
+        "after_gap"
+      ],
+      "properties": {
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "received_at of the second of two adjacent valid measurements."
+        },
+        "boot_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "protection_set",
+            "protection_cleared",
+            "charge_mos_off",
+            "charge_mos_on",
+            "discharge_mos_off",
+            "discharge_mos_on"
+          ]
+        },
+        "bit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 30,
+          "description": "Protection bit; null for charge/discharge switch events."
+        },
+        "label": {
+          "type": "string",
+          "description": "Ukrainian signal name; bits 16-30 are named as unknown."
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "important",
+            "info"
+          ],
+          "description": "important only for setting protection bits 0-11, 13, 14."
+        },
+        "after_gap": {
+          "type": "boolean",
+          "description": "More than 10 seconds between the two measurements; the moment inside the gap is unknown."
+        }
+      }
+    },
+    "BatteryEventPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "as_of",
+        "latest_important_at",
+        "events",
+        "next_before"
+      ],
+      "properties": {
+        "as_of": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "latest_important_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Start of the latest important episode (no set of the same bit during the preceding 30 minutes) if it is not older than 7 days; otherwise null."
+        },
+        "events": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/BatteryEvent"
+          }
+        },
+        "next_before": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Opaque cursor for the next older page."
         }
       }
     }

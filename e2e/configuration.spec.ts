@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { validateConfigurationState, type ConfigurationState, type ConfigurationRequest, type ConfigurationSnapshot } from '../src/api/validation';
+import { ukrainianOnly } from './support';
 
 const firstId = '11111111-1111-4111-8111-111111111111';
 const secondId = '22222222-2222-4222-8222-222222222222';
@@ -250,9 +251,99 @@ test('settings are a separate page opened from the menu, grouped into tabs witho
  await expect(panel(page).getByRole('tabpanel')).toContainText('FA · 999');
  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
  await page.getByRole('button', { name: 'Відкрити меню' }).click();
- await expect(page.getByRole('navigation', { name: 'Головне меню' }).getByRole('link')).toHaveText(['Огляд', 'Налаштування батареї']);
+ await expect(page.getByRole('navigation', { name: 'Головне меню' }).getByRole('link')).toHaveText(['Огляд', 'Історія', 'Налаштування батареї']);
  await page.getByRole('navigation', { name: 'Головне меню' }).getByRole('link', { name: 'Огляд', exact: true }).click();
  await expect(page.getByTestId('current-value')).toBeVisible();
  await expect(panel(page)).toHaveCount(0);
  await expect(page.locator('html')).toHaveAttribute('data-stream-count', '1');
+});
+
+const ids = Array.from({ length: 25 }, (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`);
+const decodedField = (code: string, label_uk: string, value: number | null, unit: string | null, status: 'verified' | 'candidate' | 'raw' = 'verified'): ConfigurationSnapshot['decoded']['fields'][number] => ({ code, label_uk, raw_hex: '0000', value: status === 'verified' ? value : null, candidate_value: status === 'candidate' ? value : null, unit, status, source: 'FA', address: null });
+const meta = (order: number, status: ConfigurationSnapshot['data_status'] = 'complete') => ({ request_id: ids[order - 1] ?? '', request_order: order, capture_started_at: `2026-11-${String(order).padStart(2, '0')}T10:00:00Z`, capture_finished_at: `2026-11-${String(order).padStart(2, '0')}T10:01:00Z`, received_at: now, accepted_at: now, data_status: status });
+function decoded(order: number, status: ConfigurationSnapshot['data_status'], fields: ConfigurationSnapshot['decoded']['fields']): ConfigurationSnapshot { return { ...meta(order, status), decoded: { data_status: status, fields, slots: [], issues: [] } }; }
+
+async function snapshotRoutes(page: Page, details: Map<number, ConfigurationSnapshot>, total: number) {
+ const stats = { active: 0, peak: 0, pages: [] as (string | null)[] };
+ await stream(page);
+ await page.route('**/api/v1/battery/configuration', route => route.fulfill({ json: { ...initial(), revision: 1, request: job(firstId, 'completed'), latest: snapshot('partial', secondId, 2), previous_complete: null } }));
+ await page.route('**/api/v1/battery/configuration/snapshots?**', route => {
+  const url = new URL(route.request().url()); const before = url.searchParams.get('before'); stats.pages.push(before);
+  const top = before ? Number(before) - 1 : total; const orders = Array.from({ length: Math.min(20, top) }, (_, index) => top - index);
+  return route.fulfill({ json: { snapshots: orders.map(order => details.get(order) ? meta(order, details.get(order)?.data_status) : meta(order)), next_before: orders.length === 20 && top > 20 ? String(top - 19) : null } });
+ });
+ await page.route('**/api/v1/battery/configuration/snapshots/*?view=decoded', async route => {
+  stats.active++; stats.peak = Math.max(stats.peak, stats.active);
+  await new Promise(resolve => setTimeout(resolve, 60));
+  const order = ids.indexOf(new URL(route.request().url()).pathname.split('/').pop() ?? '') + 1; const detail = details.get(order);
+  stats.active--;
+  await route.fulfill(detail ? { json: detail } : { status: 404, json: { error: { code: 'not_found', message: 'Не знайдено' } } });
+ });
+ return stats;
+}
+
+test('snapshots tab compares with the nearest older snapshot, separates missing data and shows wear with dashes', async ({ page }) => {
+ const details = new Map<number, ConfigurationSnapshot>([
+  [3, decoded(3, 'complete', [decodedField('parameter_112', 'Вивчена ємність', 190, 'Ah'), decodedField('parameter_7', 'Цикли', 12, 'count'), decodedField('parameter_0', 'Номінальна ємність', 200, 'Ah'), decodedField('parameter_20', 'Верхня напруга комірки', 3650, 'mV'), decodedField('parameter_24', 'Максимальний струм заряджання', 100, 'A'), decodedField('parameter_25', 'Поріг розряду', 5, 'A', 'candidate')])],
+  [2, decoded(2, 'partial', [decodedField('parameter_112', 'Вивчена ємність', 195, 'Ah'), decodedField('parameter_0', 'Номінальна ємність', 200, 'Ah'), decodedField('parameter_20', 'Верхня напруга комірки', 3600, 'mV'), decodedField('parameter_24', 'Максимальний струм заряджання', null, 'A', 'raw')])],
+  [1, decoded(1, 'complete', [decodedField('parameter_112', 'Вивчена ємність', 198, 'Ah'), decodedField('parameter_7', 'Цикли', 10, 'count'), decodedField('parameter_0', 'Номінальна ємність', 200, 'Ah')])],
+ ]);
+ const stats = await snapshotRoutes(page, details, 3);
+ await page.goto('/#configuration');
+ // Reachable although the latest snapshot is partial.
+ await expect(panel(page).getByTestId('configuration-latest')).toContainText('Частковий знімок');
+ await panel(page).getByRole('button', { name: 'Знімки', exact: true }).click();
+ const view = panel(page).getByTestId('configuration-snapshots');
+ await expect(view).toContainText('Показано знімків: 3');
+ await expect(view.getByRole('row', { name: /Верхня напруга комірки/ }).first()).toBeVisible();
+ // The newest snapshot (3) is compared with snapshot 2, which is partial.
+ const diff = view.locator('.configuration-diff');
+ await expect(diff.getByRole('row', { name: /Верхня напруга комірки/ })).toHaveText('Верхня напруга комірки3600 мВ3650 мВ');
+ await expect(diff).toContainText('Змінені значення: 2');
+ await expect(view).toContainText('Немає даних для порівняння: 3');
+ await expect(view.locator('.configuration-nodata')).toContainText('Цикли');
+ await expect(view.locator('.configuration-nodata')).toContainText('Максимальний струм заряджання');
+ await expect(view.locator('.configuration-nodata')).toContainText('Поріг розряду');
+ await expect(view.locator('.configuration-diff tbody')).not.toContainText('Цикли');
+ await expect(view.locator('.configuration-snapshot-list')).toContainText('Частковий знімок');
+ // Select snapshot 2: the nearest older one is 1.
+ await view.locator('.configuration-snapshot-list button').nth(1).click();
+ await expect(view).toContainText('Змінені значення: 1');
+ await expect(view.locator('.configuration-diff')).toContainText('198 А·год');
+ // Wear: values and share, and dashes when any value is missing.
+ const wear = view.locator('.configuration-wear');
+ await expect(wear.locator('tbody tr').nth(0)).toContainText('190 А·год');
+ await expect(wear.locator('tbody tr').nth(0)).toContainText('95 %');
+ await expect(wear.locator('tbody tr').nth(0)).toContainText('12 шт.');
+ await expect(wear.locator('tbody tr').nth(1).locator('td').nth(1)).toHaveAccessibleName('немає даних');
+ await expect(wear.locator('tbody tr').nth(1)).toContainText('97,5 %');
+ await expect(wear.locator('tbody tr').nth(1)).toContainText('Частковий знімок');
+ // Criterion 13: the snapshots section, including its accessible names, is Ukrainian only.
+ expect(await ukrainianOnly(page)).toBe(true);
+ expect(stats.peak).toBeLessThanOrEqual(2);
+ expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+ await expect(page.locator('html')).toHaveAttribute('data-stream-count', '1');
+});
+
+test('snapshots are paged by a button, never more than two decoded requests at once, no horizontal overflow', async ({ page }) => {
+ const details = new Map<number, ConfigurationSnapshot>(ids.map((_, index) => [index + 1, decoded(index + 1, 'complete', [decodedField('parameter_112', 'Вивчена ємність', 150 + index, 'Ah'), decodedField('parameter_7', 'Цикли', index, 'count'), decodedField('parameter_0', 'Номінальна ємність', 200, 'Ah')])]));
+ const stats = await snapshotRoutes(page, details, 25);
+ await page.goto('/#configuration');
+ await panel(page).getByRole('button', { name: 'Знімки', exact: true }).click();
+ const view = panel(page).getByTestId('configuration-snapshots');
+ await expect(view).toContainText('Показано знімків: 20');
+ await expect(view.locator('.configuration-wear tbody tr td:not([colspan])').first()).toBeVisible();
+ await expect(view.locator('.configuration-wear td[colspan]')).toHaveCount(0);
+ // The first page is read without a cursor (a development remount may repeat it); the next one only on the button.
+ expect(stats.pages.filter(before => before !== null)).toEqual([]);
+ await view.getByRole('button', { name: 'Завантажити ще' }).click();
+ await expect(view).toContainText('Показано знімків: 25');
+ await expect(view.getByRole('button', { name: 'Завантажити ще' })).toHaveCount(0);
+ await expect(view.locator('.configuration-wear td[colspan]')).toHaveCount(0);
+ expect(stats.pages.filter(before => before !== null)).toEqual(['6']);
+ expect(stats.peak).toBe(2);
+ expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+ // Leaving the tab keeps the field tabs intact.
+ await panel(page).getByRole('button', { name: 'Поточні значення' }).click();
+ await expect(panel(page).getByTestId('configuration-latest')).toBeVisible();
 });

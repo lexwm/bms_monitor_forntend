@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { HistoryResponse } from '../src/api/validation';
-import { historySegments } from '../src/history';
+import { chartAxis, historySegments } from '../src/history';
 const stamp = (seconds: number) => new Date(Date.UTC(2026, 10, 17, 12, 0, seconds)).toISOString();
 const point = (seconds: number, changes: Partial<HistoryResponse['points'][number]> = {}): HistoryResponse['points'][number] => ({ received_at: stamp(seconds), boot_id: 'ffffffffffff0001', sequence: seconds, valid: true, current_a: -10, power_w: -260, soc_percent: 78, ...changes });
 function history(points: HistoryResponse['points'], gaps: HistoryResponse['gaps'] = []): HistoryResponse {
@@ -53,5 +53,76 @@ describe('aggregate chart preserves measured limits and uncertainty',()=>{
   expect(historyRanges.map(r=>r.value)).toEqual(['10m','1h','12h','24h','30d','3mo','1y']);
   expect(historyTime('2026-12-31T23:00:00Z','1y')).toContain('2027');
   expect(historyTime('2026-12-31T23:00:00Z','30d')).toMatch(/1.*січ/);
+ });
+});
+
+import { cursorTimes, cursorValue, nearestIndex, periodExtremes } from '../src/history';
+import type { HistoryCompactSummary, HistoryDetailContinuity } from '../src/api/validation';
+const compactValue=(min:number,max:number,count=12):HistoryCompactSummary=>({count,mean:(min+max)/2,min,max});
+const detail=(minute:number,changes:Partial<HistoryDetailContinuity>={}):HistoryDetailContinuity=>({count:12,observed_coverage_seconds:60,continuous:true,first_at:stamp(minute*60),last_at:stamp(minute*60+55),first_boot:'ffffffffffff0001',last_boot:'ffffffffffff0001',...changes});
+const cellBin=(minute:number,cells:(HistoryCompactSummary|null)[],delta:number,changes:Partial<HistoryBin>={}):HistoryBin=>bin(minute,{detail_status:'ready',detail:detail(minute),cells_v:cells,cell_delta_mv:compactValue(delta-5,delta),...changes});
+describe('additional metrics share the interval continuity',()=>{
+ it('draws cells and keeps pending detail out of the line',()=>{
+  const bins=[cellBin(0,[compactValue(3.2,3.3)],10),cellBin(1,[compactValue(3.2,3.4)],12),bin(2,{detail_status:'pending',detail:null,cells_v:null,cell_delta_mv:null}),cellBin(3,[compactValue(3.1,3.3)],8)];
+  expect(aggregateSegments(aggregate(bins),'cell:0').map(s=>s.points.length)).toEqual([2,1]);
+  expect(aggregateSegments(aggregate(bins),'cell:1')).toEqual([]);
+  expect(cursorValue(aggregate(bins),2,'cell:0')).toBe('pending');
+  expect(cursorValue(aggregate(bins),2,'power_w')).toMatchObject({kind:'bin',mean:10});
+ });
+ it('treats a metric missing in some measurements of an interval as partial',()=>{
+  const bins=[cellBin(0,[compactValue(3.2,3.3,6)],10),cellBin(1,[compactValue(3.2,3.3)],10)];
+  expect(aggregateSegments(aggregate(bins),'cell:0').flatMap(s=>s.points).map(p=>p.partial)).toEqual([true,false]);
+ });
+ it('finds 24-hour extremes across all cells and sensors, with a dash and a pending state',()=>{
+  const bins=[cellBin(0,[compactValue(3.2,3.3),null,compactValue(3.25,3.45)],10,{temperatures_c:[compactValue(20,22),compactValue(19,25)]}),cellBin(1,[compactValue(3.1,3.3)],35,{temperatures_c:null})];
+  expect(periodExtremes(aggregate(bins),'cells')).toEqual({status:'ready',min:3.1,max:3.45,delta:35});
+  expect(periodExtremes(aggregate(bins),'temperatures')).toEqual({status:'ready',min:19,max:25,delta:null});
+  expect(periodExtremes(aggregate([bin(0)]),'cells')).toEqual({status:'ready',min:null,max:null,delta:null});
+  expect(periodExtremes(aggregate([...bins,bin(2,{detail_status:'pending',detail:null})]),'cells')).toEqual({status:'pending'});
+ });
+ it('moves the cursor between intervals or valid points',()=>{
+  const times=cursorTimes(aggregate([bin(0),bin(1)]));
+  expect(times).toEqual([Date.parse(stamp(30)),Date.parse(stamp(90))]);
+  expect(nearestIndex(times,Date.parse(stamp(70)))).toBe(1);expect(nearestIndex([],0)).toBe(-1);
+ });
+});
+
+describe('chart axis labels', () => {
+ const distinct = (labels: string[]) => new Set(labels).size === 3;
+ it('keeps three distinct labels one printed unit apart on a flat line', () => {
+  expect(chartAxis([25, 25], false).labels).toEqual(['25,1', '25', '24,9']);
+  expect(chartAxis([100, 100], false).labels).toEqual(['101', '100', '99']);
+  expect(chartAxis([26.6, 26.6], false).labels).toEqual(['26,7', '26,6', '26,5']);
+  expect(chartAxis([25.05, 25.05], false).labels).toEqual(['25,2', '25,1', '24,9']);
+  expect(chartAxis([99.99, 99.99], false).labels).toEqual(['101', '100', '99']);
+ });
+ it('keeps the existing range for cells and negative values', () => {
+  expect(chartAxis([3.29, 3.305], false).labels).toEqual(['3,33', '3,3', '3,27']);
+  expect(chartAxis([-12, -10], false).labels).toEqual(['-9,8', '-11', '-12,2']);
+  expect(chartAxis([-50.5, 20], true).labels).toEqual(['28,5', '-15,2', '-59']);
+ });
+ it('prints a huge flat line in scientific notation with distinct labels', () => {
+  // uk-UA writes the exponent with the Cyrillic «Е».
+  expect(chartAxis([1e300, 1e300], false).labels).toEqual(['2Е300', '1Е300', '-1Е297']);
+ });
+ it('stays finite and distinct for huge values', () => {
+  for (const values of [[1e300, 1e300], [-1e300, 1e300], [5e6, 5e6], [123456789, 123456789]]) {
+   const axis = chartAxis(values, false);
+   expect(distinct(axis.labels), String(values)).toBe(true);
+   expect(axis.labels.join(' '), String(values)).not.toMatch(/NaN|∞|Infinity/);
+  }
+  // Grid lines beyond the largest number are printed at that number, never as infinity.
+  for (const values of [[Number.MAX_VALUE, Number.MAX_VALUE], [-Number.MAX_VALUE, Number.MAX_VALUE]]) {
+   const axis = chartAxis(values, true);
+   expect(axis.labels.join(' ')).not.toMatch(/NaN|∞|Infinity/);
+   expect(Number.isFinite(axis.min) && Number.isFinite(axis.max) && axis.min < axis.max).toBe(true);
+  }
+ });
+ it('shows dashes without values and keeps finite bounds', () => {
+  for (const zero of [true, false]) {
+   const axis = chartAxis([], zero);
+   expect(axis.labels).toEqual(['—', '—', '—']);
+   expect(Number.isFinite(axis.min) && Number.isFinite(axis.max) && axis.min < axis.max).toBe(true);
+  }
  });
 });

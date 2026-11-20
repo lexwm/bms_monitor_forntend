@@ -1,4 +1,5 @@
 import type { JbdField } from './api/validation';
+import { format } from './format';
 
 // Presentation-only grouping of decoded settings by their contract code.
 // Every field that is not placed here stays visible on the service tab.
@@ -71,4 +72,13 @@ export function configurationTabs(fields: JbdField[]): Tab[] {
  const rest = fields.filter(field => !placed.has(field));
  if (rest.length) tabs.push({ id: 'service', label: 'Службові', sections: [{ kind: 'service', title: 'Службові та нерозпізнані значення', fields: rest }] });
  return tabs;
+}
+
+const units: Record<string, string> = { V: 'В', mV: 'мВ', A: 'А', mA: 'мА', Ah: 'А·год', W: 'Вт', s: 'с', ms: 'мс', 'µs': 'мкс', min: 'хв', h: 'год', days: 'днів', count: 'шт.', 'mΩ': 'мОм' };
+
+export function valueText(value: JbdField['value'], unit: string | null): string {
+ if (value === null) return 'Невідомо';
+ const integer = typeof value === 'number' && Number.isInteger(value) && (unit === null || ['count', 's', 'ms', 'min', 'h', 'days'].includes(unit));
+ const text = typeof value === 'number' ? integer ? value.toLocaleString('uk-UA', { maximumFractionDigits: 0, useGrouping: false }) : format(value) : typeof value === 'boolean' ? value ? 'Так' : 'Ні' : value;
+ return `${text}${unit ? ` ${units[unit] ?? unit}` : ''}`;
 }

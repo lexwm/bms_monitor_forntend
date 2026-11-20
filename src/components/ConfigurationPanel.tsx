@@ -1,20 +1,13 @@
 import { useState, type KeyboardEvent } from 'react';
 import type { ConfigurationSnapshot, JbdField } from '../api/validation';
-import { configurationTabs, matrixColumns, type Section } from '../configurationLayout';
-import { format, time } from '../format';
+import { configurationTabs, matrixColumns, valueText, type Section } from '../configurationLayout';
+import { time } from '../format';
+import { ConfigurationSnapshots } from './ConfigurationSnapshots';
 import type { useConfiguration } from '../useConfiguration';
 
 const requestLabels = { pending: 'Очікуємо на збирач даних', running: 'Збирач отримує налаштування', completed: 'Результат отримано', expired: 'Час очікування минув' };
 const dataLabels = { complete: 'Повний знімок', partial: 'Частковий знімок', unavailable: 'Налаштування не отримано' };
 const fieldLabels = { verified: 'Підтверджене тлумачення', candidate: 'Попереднє тлумачення', unsupported: 'Не підтримується', raw: 'Лише вихідні байти', invalid: 'Некоректна відповідь' };
-const units: Record<string, string> = { V: 'В', mV: 'мВ', A: 'А', mA: 'мА', Ah: 'А·год', W: 'Вт', s: 'с', ms: 'мс', 'µs': 'мкс', min: 'хв', h: 'год', days: 'днів', count: 'шт.', 'mΩ': 'мОм' };
-
-function valueText(value: JbdField['value'], unit: string | null): string {
- if (value === null) return 'Невідомо';
- const integer = typeof value === 'number' && Number.isInteger(value) && (unit === null || ['count', 's', 'ms', 'min', 'h', 'days'].includes(unit));
- const text = typeof value === 'number' ? integer ? value.toLocaleString('uk-UA', { maximumFractionDigits: 0, useGrouping: false }) : format(value) : typeof value === 'boolean' ? value ? 'Так' : 'Ні' : value;
- return `${text}${unit ? ` ${units[unit] ?? unit}` : ''}`;
-}
 const origin = (field: JbdField) => `${field.source}${field.address ? ` · ${field.address}` : ''}`;
 
 const unknownLabels = { unsupported: 'не підтримується', raw: 'не розшифровано', invalid: 'некоректна відповідь' };
@@ -70,6 +63,7 @@ export function ConfigurationPanel({ configuration }: { configuration: ReturnTyp
  const expired = !!job && (job.state === 'expired' || deadlineReached === job.request_id);
  const pending = !!job && !expired && (job.state === 'pending' || job.state === 'running');
  const fallback = latest && latest.data_status !== 'complete' ? state?.previous_complete : null;
+ const [snapshots, setSnapshots] = useState(false);
  const previous = !!fallback && previousId === fallback.request_id;
  const shown = previous ? fallback : latest;
  return <section className="configuration" id="configuration" aria-label="Налаштування батареї">
@@ -79,10 +73,16 @@ export function ConfigurationPanel({ configuration }: { configuration: ReturnTyp
   </div>
   <p className="configuration-status" aria-live="polite">{creating ? 'Надсилаємо запит…' : expired ? 'Час очікування минув. Можна надіслати новий запит.' : job ? requestLabels[job.state] : state ? 'Запитів на оновлення ще не було.' : 'Стан запитів ще не отримано.'}{pending && <> · до {time(job.deadline_at)}</>}</p>
   {error && <p className="history-warning">Не вдалося оновити налаштування. {error === 'database_unavailable' ? 'База даних недоступна.' : error === 'incompatible_response' ? 'Сервер надіслав дані в непідтримуваному форматі.' : 'Перевірте зв’язок і повторіть спробу.'}</p>}
-  {fallback && <div className="configuration-tabs" role="group" aria-label="Знімок налаштувань">
-   <button type="button" aria-pressed={!previous} onClick={() => setPreviousId(null)}>Останній знімок</button>
-   <button type="button" aria-pressed={previous} onClick={() => setPreviousId(fallback.request_id)}>Попередній повний знімок</button>
-  </div>}
-  {shown ? <Snapshot snapshot={shown} previous={previous}/> : <p>{state ? 'Знімків налаштувань поки немає.' : 'Знімок налаштувань ще не отримано.'}</p>}
+  <div className="configuration-tabs" role="group" aria-label="Розділ сторінки">
+   <button type="button" aria-pressed={!snapshots} onClick={() => setSnapshots(false)}>Поточні значення</button>
+   <button type="button" aria-pressed={snapshots} onClick={() => setSnapshots(true)}>Знімки</button>
+  </div>
+  {snapshots ? <ConfigurationSnapshots key={latest?.request_id}/> : <>
+   {fallback && <div className="configuration-tabs" role="group" aria-label="Знімок налаштувань">
+    <button type="button" aria-pressed={!previous} onClick={() => setPreviousId(null)}>Останній знімок</button>
+    <button type="button" aria-pressed={previous} onClick={() => setPreviousId(fallback.request_id)}>Попередній повний знімок</button>
+   </div>}
+   {shown ? <Snapshot snapshot={shown} previous={previous}/> : <p>{state ? 'Знімків налаштувань поки немає.' : 'Знімок налаштувань ще не отримано.'}</p>}
+  </>}
  </section>;
 }

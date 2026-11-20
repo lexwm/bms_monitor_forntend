@@ -1,5 +1,6 @@
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 import { validateState, type StreamState } from '../src/api/validation';
+import { series } from './support';
 
 async function snapshot(request: APIRequestContext): Promise<StreamState> {
  const response=await request.get('/api/v1/telemetry/state');
@@ -90,4 +91,19 @@ test('opening the stream resyncs a measurement published after the bootstrap sna
  // The publication occurred before subscription and is never replayed to this client.
  await page.evaluate(()=>window.dispatchEvent(new Event('late-first-open')));
  await expect(page.getByRole('img',{name:'Заряд 77 відсотків'})).toBeVisible();expect(requests).toBe(baseline+1);
+});
+
+test('«Оновити знімок» on the history page rereads state and history, keeping the stream and the snapshot on failure',async({page,request})=>{
+ const initial=await snapshot(request);await mockStream(page);let states=0;let histories=0;let unavailable=false;
+ await page.route('**/api/v1/telemetry/state',async route=>{states++;await route.fulfill({status:unavailable?503:200,contentType:'application/json',json:unavailable?{error:{code:'database_unavailable',message:'Unavailable'}}:initial});});
+ await page.route('**/api/v1/battery/history/series?*',route=>{histories++;const failed=unavailable;return route.fulfill(failed?{status:503,json:{error:{code:'database_unavailable',message:'Unavailable'}}}:{json:series('10m','overview')});});
+ await page.goto('/#history');await expect(page.locator('.quality .micro')).toHaveText('10 хв');
+ const streams=await page.locator('html').getAttribute('data-stream-count');const stateBaseline=states;const historyBaseline=histories;
+ await page.getByRole('button',{name:'Оновити знімок'}).click();
+ await expect.poll(()=>states).toBe(stateBaseline+1);await expect.poll(()=>histories).toBe(historyBaseline+1);
+ unavailable=true;await page.getByRole('button',{name:'Оновити знімок'}).click();
+ await expect(page.getByRole('status')).toContainText('База даних недоступна');
+ await expect(page.locator('.quality .history-warning')).toHaveText('Не вдалося оновити історію. Збережений знімок може бути застарілим.');
+ await expect(page.getByRole('slider',{name:'Потужність',exact:true})).toHaveAccessibleDescription(/^Потужність\. Виміряних точок: 2/);
+ expect(await page.locator('html').getAttribute('data-stream-count')).toBe(streams);
 });

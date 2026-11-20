@@ -1,5 +1,6 @@
 import { expect, test, type Page, type APIRequestContext } from '@playwright/test';
 import { validateState, validateEvent, type StreamState, type RawHistorySeries } from '../src/api/validation';
+import { mockHistory, series } from './support';
 
 async function initialState(request: APIRequestContext): Promise<StreamState> {
  const raw: unknown = await (await request.get('/api/v1/telemetry/state')).json();
@@ -27,7 +28,7 @@ async function emit(page: Page, state: StreamState) {
  await page.evaluate(data => window.dispatchEvent(new CustomEvent('layout-message', { detail: data })), event);
  await page.waitForTimeout(30);
 }
-const panels = '.hero,.metric,.cells,.temps,.history,.current-history,.quality';
+const panels = '.hero,.metric,.cells,.temps,.data-row';
 async function geometry(page: Page) {
  return page.locator(panels).evaluateAll(nodes => nodes.map(node => { const box = node.getBoundingClientRect(); return { x: box.x, y: box.y + window.scrollY, width: box.width, height: box.height }; }));
 }
@@ -44,8 +45,8 @@ for (const width of [320, 390, 600, 1440]) {
   await page.setViewportSize({ width, height: 900 }); await page.emulateMedia({ reducedMotion: 'reduce' }); await streamStub(page);
   let state = await initialState(request); let failApi = false;
   await page.route('**/api/v1/telemetry/state', route => route.fulfill(failApi ? { status: 503, json: { error: { code: 'database_unavailable', message: 'Unavailable' } } } : { json: state }));
-  await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
-  await page.goto('/'); await expect(page.getByTestId('history-segment')).toHaveCount(2);
+  await mockHistory(page);
+  await page.goto('/'); await expect(page.getByTestId('day-range-cells')).toContainText('мін.');
   await expect(page.getByRole('img', { name: 'Заряд 58 відсотків' })).toHaveAccessibleDescription(/Розряджання/);
   const baseline = await geometry(page);
   const unitX = await page.locator('.metric .unit').evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().x));
@@ -92,28 +93,12 @@ for (const width of [320, 390, 600, 1440]) {
  });
 }
 
-test('history loading, missing series and errors retain the same chart scaffold', async ({ page, request }, testInfo) => {
- await page.emulateMedia({ reducedMotion: 'reduce' }); await streamStub(page);
- const state = await initialState(request); const history = sampleHistory(); let failure = false; let empty = false;
- let release = () => {}; const gate = new Promise<void>(resolve => { release = resolve; });
- await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history/series?*', async route => { await gate; await route.fulfill(failure ? { status: 503, json: { error: { code: 'database_unavailable', message: 'Unavailable' } } } : { json: empty ? { ...history, points: [], observed_coverage_seconds: 0, gaps: [{ from: history.from, to: history.to }] } : history }); });
- await page.goto('/'); await expect(page.getByText('Завантажуємо історію…', { exact: true })).toHaveCount(2);
- await expect(page.getByRole('img', { name: 'Заряд 58 відсотків' })).toBeVisible(); const baseline = await geometry(page);
- release(); await expect(page.getByTestId('history-segment')).toHaveCount(2); await expectStable(page, baseline);
- empty = true; await page.getByRole('button', { name: 'Оновити знімок' }).evaluate(button => { if (button instanceof HTMLButtonElement) button.click(); });
- await expect(page.getByText('Немає значень показника за цей період', { exact: true })).toHaveCount(2); await expectStable(page, baseline);
- failure = true; await page.getByRole('button', { name: 'Оновити знімок' }).evaluate(button => { if (button instanceof HTMLButtonElement) button.click(); });
- await expect(page.getByText('Не вдалося оновити історію. Збережений знімок може бути застарілим.', { exact: true })).toBeVisible(); await expectStable(page, baseline);
- await page.screenshot({ path: testInfo.outputPath('stable-dashboard.png'), fullPage: true });
-});
-
 test('battery states explain available evidence and all interface text is Ukrainian', async ({ page, request }, testInfo) => {
  await streamStub(page); await page.emulateMedia({ reducedMotion: 'reduce' });
  let state = await initialState(request);
  let apiError: string | null = null;
  await page.route('**/api/v1/telemetry/state', route => route.fulfill(apiError ? { status: 503, json: { error: { code: apiError, message: 'This server message must never be displayed' } } } : { json: state }));
- await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
+ await mockHistory(page);
  await page.goto('/');
  await expect(page.locator('html')).toHaveAttribute('lang', 'uk');
  await expect(page).toHaveTitle('Монітор батареї');
@@ -165,7 +150,7 @@ test('fractional charge stays inside the fixed indicator', async ({ page, reques
  await streamStub(page); await page.emulateMedia({ reducedMotion: 'reduce' });
  let state = await initialState(request);
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
+ await mockHistory(page);
  await page.goto('/'); await expect(page.getByRole('img', { name: 'Заряд 58 відсотків' })).toBeVisible();
  const baseline = await geometry(page);
  const percentX = await page.locator('.soc small').evaluate(node => node.getBoundingClientRect().x);
@@ -189,7 +174,7 @@ test('last valid time follows a valid latest reading and the invalid fallback', 
  if (!latest?.battery) throw new Error('Missing fixture');
  const lastValidAt = new Date(Date.parse(latest.received_at) - 60000).toISOString();
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
+ await mockHistory(page);
  await page.goto('/'); await expect(page.getByRole('img', { name: 'Заряд 58 відсотків' })).toBeVisible();
  await page.getByText('Про дані та час вимірювань', { exact: true }).click();
  const note = page.locator('.data-details .notice');
@@ -207,30 +192,23 @@ test('last valid time follows a valid latest reading and the invalid fallback', 
  await emit(page, state); await expect(note).toHaveText('Останнє коректне вимірювання: —.');
 });
 
-test('tooltips and chart descriptions preserve Ukrainian numeric values', async ({ page, request }) => {
+test('tooltips preserve Ukrainian numeric values', async ({ page, request }) => {
  await streamStub(page);
  const initial = await initialState(request); const latest = initial.latest;
  if (!latest?.battery) throw new Error('Missing fixture');
  let state: StreamState = { ...initial, latest: { ...latest, mode: 'charge', battery: { ...latest.battery, current_a: 0.04, cells_v: Array.from({ length: 8 }, () => 3.31234), temperatures_c: [22.567] } } };
- const original = sampleHistory();
- let history = { ...original, points: original.points.map((point, index) => ({ ...point, power_w: index === 0 ? -50 : 20, current_a: null })) };
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: history }));
+ await mockHistory(page);
  await page.goto('/');
  await expect(page.getByTestId('current-value').locator('.numeric-reading')).toHaveAttribute('title', '0,04 А');
  await expect(page.locator('.cell-reading').first()).toHaveAttribute('title', '3,312 В');
  await expect(page.locator('.temp-row strong').first()).toHaveAttribute('title', '22,567 °C');
  await expect(page.locator('.temp-top .numeric-reading')).toHaveAttribute('title', '22,567 °C');
- await expect(page.getByRole('img', { name: 'Історія потужності. Виміряних точок: 2. Потужність, Вт: від -50 до 20. Проміжків без вимірювань: 1' })).toBeVisible();
- await expect(page.getByRole('img', { name: 'Історія струму. Виміряних точок: 0. Немає значень показника за цей період. Проміжків без вимірювань: 1' })).toBeVisible();
  const currentLatest = state.latest;
  if (!currentLatest?.battery) throw new Error('Missing fixture');
  state = { ...state, latest: { ...currentLatest, battery: { ...currentLatest.battery, current_a: 1.23456789e-19 } } };
  await page.getByRole('button', { name: 'Оновити знімок' }).click();
  await expect(page.getByTestId('current-value').locator('.numeric-reading')).toHaveAttribute('title', /1,235[ЕE]-19 А/);
- history = { ...history, points: [] };
- await page.getByRole('button', { name: 'Оновити знімок' }).click();
- await expect(page.getByRole('img', { name: 'Історія потужності. Виміряних точок: 0. Немає значень показника за цей період. Проміжків без вимірювань: 1' })).toBeVisible();
 });
 
 test('horizontal cells use two rows of four with stable centered readings inside', async ({ page, request }, testInfo) => {
@@ -240,7 +218,7 @@ test('horizontal cells use two rows of four with stable centered readings inside
  if (!latest?.battery) throw new Error('Missing fixture');
  state = { ...state, latest: { ...latest, battery: { ...latest.battery, cells_v: [3.3, 3.301, 3.298, 3.3, 3.304, 3.3, 3.299, 3.3] } } };
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
- await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: sampleHistory() }));
+ await mockHistory(page);
  await page.goto('/');
  await expect(page.locator('.cell-reading strong').first()).toContainText('3,3');
  await expect(page.locator('.cell-body > .cell-reading')).toHaveCount(8);
@@ -268,4 +246,34 @@ test('horizontal cells use two rows of four with stable centered readings inside
  const updated = await page.locator('.cell-unit').evaluateAll(nodes => nodes.map(node => { const range = document.createRange(); range.selectNodeContents(node); return range.getBoundingClientRect().x; }));
  updated.forEach((x, index) => expect(x).toBeCloseTo(centers[index]?.unit ?? NaN, 1));
  await page.locator('.cells').screenshot({ path: testInfo.outputPath('centered-cells.png') });
+});
+
+test('estimate uses the 10-minute average only for one steady direction and shows its end time', async ({ page, request }) => {
+ await streamStub(page);
+ const initial = await initialState(request); const latest = initial.latest;
+ if (!latest?.battery) throw new Error('Missing fixture');
+ let state: StreamState = { ...initial, latest: { ...latest, battery: { ...latest.battery, current_a: -10, remaining_ah: 100 } } };
+ const base = sampleHistory(); const to = Date.parse(base.to);
+ let currents = (index: number): number | null => index % 2 ? -15 : -25;
+ const window = (): RawHistorySeries => ({ ...base, observed_coverage_seconds: 600, gaps: [], points: Array.from({ length: 120 }, (_, index) => ({ received_at: new Date(to - 600000 + index * 5000).toISOString(), boot_id: 'ffffffffffff0001', sequence: index, valid: true, current_a: currents(index), power_w: null, soc_percent: null })) });
+ await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: state }));
+ await mockHistory(page, (range, set) => range === '10m' ? window() : series(range, set));
+ const region = page.getByRole('region', { name: 'Розрахунковий час', exact: true });
+ const end = (minutes: number) => new Date(Date.parse(state.latest?.received_at ?? '') + minutes * 60000);
+ const clock = (minutes: number) => end(minutes).toLocaleTimeString('uk-UA', { timeZone: 'Europe/Kyiv', hour: '2-digit', minute: '2-digit' });
+ await page.goto('/');
+ // 100 А·год at the 20 A average: 5 hours, not the 10 hours of the present 10 A.
+ await expect(page.getByTestId('estimate-value')).toHaveText('5 год 0 хв');
+ await expect(region).toContainText('за середнім струмом за 10 хв');
+ await expect(region).toContainText(new RegExp(`≈ до (\\d\\d\\.\\d\\d )?${clock(300)}`));
+ currents = index => index === 7 ? 0 : -20;
+ await page.getByRole('button', { name: 'Оновити знімок' }).click();
+ await expect(page.getByTestId('estimate-value')).toHaveText('10 год 0 хв');
+ await expect(region).toContainText('за поточним струмом');
+ const current = state.latest;
+ if (!current?.battery) throw new Error('Missing fixture');
+ state = { ...state, latest: { ...current, mode: 'idle', battery: { ...current.battery, current_a: 0 } } };
+ await page.getByRole('button', { name: 'Оновити знімок' }).click();
+ await expect(page.getByTestId('estimate-value')).toHaveText('—');
+ await expect(region).toContainText('Струм дорівнює нулю (малі струми можуть не реєструватися).');
 });

@@ -1,115 +1,125 @@
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
-import { validateState, type StreamState, type HistoryRange, type HistorySeries, type HistoryBin, type HistoryMetricSummary } from '../src/api/validation';
+import type { StreamState } from '../src/api/validation';
+import { emit, freshState, knownRange, knownSet, measurementSignal, mockHistory, noEvents, preparedSignal, ranges, requested, series, setHidden, stamp, stubStream, energy } from './support';
+
 const endpoint='**/api/v1/battery/history/series?*';
-const boot='ffffffffffff0001';
-const stamp=(seconds:number)=>new Date(Date.UTC(2026,10,18,12)+seconds*1000).toISOString();
-function metric(from:number,to:number,changes:Partial<HistoryMetricSummary>={}):HistoryMetricSummary {
- return {count:(to-from)/5,mean:10,min:-100,max:200,observed_coverage_seconds:to-from,continuous:true,first_at:stamp(from),last_at:stamp(to-5),first_boot:boot,last_boot:boot,...changes};
-}
-function series(range:HistoryRange='10m',pending=false):HistorySeries {
- const common={range,from:stamp(0),to:stamp(600),period_seconds:600,source_revision:1,aggregate_revision:1,prepared_at:stamp(600),processing_status:'ready' as const,observed_coverage_seconds:600,prepared_coverage_seconds:600};
- if(range==='10m' || range==='1h')return {...common,kind:'raw',resolution_seconds:0,gaps:[],points:[0,5].map(seconds=>({received_at:stamp(seconds),sequence:seconds,boot_id:boot,valid:true,power_w:10,current_a:1,soc_percent:50}))};
- const bins:HistoryBin[]=[0,300].map(from=>({from:stamp(from),to:stamp(from+300),status:'ready',observed_coverage_seconds:300,power_w:metric(from,from+300),current_a:metric(from,from+300)}));
- if(pending)bins[1]={from:stamp(300),to:stamp(600),status:'pending',observed_coverage_seconds:null,power_w:null,current_a:null};
- return {...common,kind:'aggregate',resolution_seconds:300,bins,...(pending?{processing_status:'pending',observed_coverage_seconds:null,prepared_coverage_seconds:300}: {})};
-}
 async function setup(page:Page,request:APIRequestContext) {
- const response=await request.get('/api/v1/telemetry/state');const data:unknown=await response.json();
- if(!validateState(data))throw new Error('Expected local state');
- const state:StreamState={...data,server_time:new Date().toISOString()};
- await page.addInitScript(()=>{
-  Object.defineProperty(window,'EventSource',{value:class extends EventTarget {
-   message=(event:Event)=>{if(event instanceof CustomEvent)this.dispatchEvent(new MessageEvent(event.detail.type,{data:JSON.stringify(event.detail.data)}));};
-   constructor(){super();document.documentElement.dataset.streamCount=String(Number(document.documentElement.dataset.streamCount??0)+1);window.addEventListener('history-test-event',this.message);}
-   close(){document.documentElement.dataset.streamCount=String(Number(document.documentElement.dataset.streamCount??0)-1);window.removeEventListener('history-test-event',this.message);}
-  }});
- });
+ const state:StreamState=await freshState(request);
+ await stubStream(page);
  let states=0;
  await page.route('**/api/v1/telemetry/state',route=>{states++;return route.fulfill({json:state});});
  return {state,states:()=>states};
 }
-async function emit(page:Page,type:string,data:unknown) {
- await page.evaluate(detail=>window.dispatchEvent(new CustomEvent('history-test-event',{detail})),{type,data});
-}
-async function aggregateSignal(page:Page,revision:number) { await emit(page,'history.updated.v1',{schema:1,aggregate_revision:revision,prepared_at:stamp(600+revision)}); }
-const select=(page:Page,label:string)=>page.getByRole('group',{name:'Період історії потужності, струму та повноти'}).getByRole('button',{name:label,exact:true});
-const ranges:ReadonlyArray<readonly [HistoryRange,string]>=[['10m','10 хв'],['1h','1 год'],['12h','12 год'],['24h','24 год'],['30d','30 днів'],['3mo','Квартал'],['1y','Рік']];
+const select=(page:Page,label:string)=>page.getByRole('group',{name:'Період історії'}).getByRole('button',{name:label,exact:true});
+const quality=(page:Page)=>page.locator('.quality .micro');
+const failure={status:503,json:{error:{code:'database_unavailable',message:'Unavailable'}}};
 
-test('seven periods update both graphs and coverage through one stream and one request',async({page,request})=>{
- const initial=await setup(page,request);const calls:string[]=[];
+test('seven periods load one series of the open tab through one stream, without new state snapshots',async({page,request})=>{
+ const initial=await setup(page,request);
  await page.emulateMedia({reducedMotion:'reduce'});
- await page.route(endpoint,route=>{const range=new URL(route.request().url()).searchParams.get('range');const known=ranges.find(item=>item[0]===range);if(!known)throw new Error('Unknown range');calls.push(known[0]);return route.fulfill({json:series(known[0])});});
- await page.goto('/');await expect(page.locator('.quality .micro')).toHaveText('10 хв');
+ const {calls}=await mockHistory(page);
+ await page.goto('/#history');await expect(quality(page)).toHaveText('10 хв');
+ await expect(page.locator('.history-chart')).toHaveCount(5);
  const initialCalls=calls.length;const initialStates=initial.states();
- for(const [value,label] of ranges.slice(1)) {
-  await select(page,label).click();await expect(page.locator('.quality .micro')).toHaveText(label);
-  await expect(page.locator('.current-history .micro')).toHaveText(`Знімок · ${label}`);
+ for(const [,label] of ranges.slice(1)) {
+  await select(page,label).click();await expect(quality(page)).toHaveText(label);
   await expect(select(page,label)).toHaveAttribute('aria-pressed','true');await expect(select(page,label)).toBeDisabled();
-  expect(calls.at(-1)).toBe(value);
  }
- expect(calls.slice(initialCalls)).toEqual(ranges.slice(1).map(item=>item[0]));expect(initial.states()).toBe(initialStates);
+ expect(calls.slice(initialCalls)).toEqual(ranges.slice(1).map(item=>`${item[0]}:overview`));
+ await page.getByRole('navigation',{name:'Розділи історії'}).getByRole('link',{name:'Комірки'}).click();
+ await expect(page.locator('.history-chart')).toHaveCount(2);await expect.poll(()=>calls.at(-1)).toBe('1y:cells');
+ const cellsCalls=calls.length;
+ await select(page,'30 днів').click();await expect(quality(page)).toHaveText('30 днів');
+ expect(calls.slice(cellsCalls)).toEqual(['30d:cells']);
+ expect(initial.states()).toBe(initialStates);
  expect(await page.locator('html').getAttribute('data-stream-count')).toBe('1');
 });
 
 test('a delayed older selection cannot replace the last selected period or its saved metadata',async({page,request})=>{
  await setup(page,request);let release=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});let oldRequested=false;
- await page.route(endpoint,async route=>{
-  const range=new URL(route.request().url()).searchParams.get('range');
-  if(range==='12h'){oldRequested=true;await gate;await route.fulfill({json:series('12h')}).catch(()=>{});return;}
-  await route.fulfill({json:series(range==='1y'?'1y':'10m')});
- });
- await page.goto('/');await expect(page.locator('.quality .micro')).toHaveText('10 хв');
+ await mockHistory(page,async(range,set)=>{if(range==='12h'){oldRequested=true;await gate;}return series(range,set);});
+ await page.goto('/#history');await expect(quality(page)).toHaveText('10 хв');
  await select(page,'12 год').click();await expect.poll(()=>oldRequested).toBe(true);
- await expect(page.locator('.quality .micro')).toHaveText('10 хв');await expect(page.locator('.history-warning')).toContainText('Оновлюємо історію · 12 год');
- await select(page,'Рік').click();await expect(page.locator('.quality .micro')).toHaveText('Рік');
- release();await page.waitForTimeout(250);await expect(page.locator('.quality .micro')).toHaveText('Рік');
+ await expect(quality(page)).toHaveText('10 хв');await expect(page.locator('.quality .history-warning')).toContainText('Оновлюємо історію · 12 год');
+ await select(page,'Рік').click();await expect(quality(page)).toHaveText('Рік');
+ release();await page.waitForTimeout(250);await expect(quality(page)).toHaveText('Рік');
  await expect(select(page,'Рік')).toHaveAttribute('aria-pressed','true');
 });
 
-test('telemetry and independent aggregate signals are coalesced without background polling',async({page,request})=>{
- const initial=await setup(page,request);const frozenAt=new Date();await page.clock.install({time:frozenAt});await page.clock.pauseAt(new Date(frozenAt.getTime()+1000));let count=0;
- await page.route(endpoint,route=>{count++;return route.fulfill({json:series(new URL(route.request().url()).searchParams.get('range')==='1y'?'1y':'10m')});});
- await page.goto('/');await expect(page.locator('.quality .micro')).toHaveText('10 хв');const baseline=count;const stateBaseline=initial.states();
- await emit(page,'telemetry.updated.v1',{schema:1,revision:initial.state.revision+1,server_time:initial.state.server_time,history_changed:true,latest:initial.state.latest?{...initial.state.latest,revision:initial.state.revision+1}:null});
- await aggregateSignal(page,2);await aggregateSignal(page,3);
- await page.clock.runFor(14999);expect(count).toBe(baseline);await page.clock.runFor(1);await expect.poll(()=>count).toBe(baseline+1);
- await page.clock.fastForward(120000);expect(count).toBe(baseline+1);
- await select(page,'Рік').evaluate(button=>{if(button instanceof HTMLButtonElement)button.click();});await expect(page.locator('.quality .micro')).toHaveText('Рік');expect(count).toBe(baseline+2);
- await aggregateSignal(page,4);await aggregateSignal(page,5);
- await page.clock.runFor(59999);expect(count).toBe(baseline+2);await page.clock.runFor(1);await expect.poll(()=>count).toBe(baseline+3);
+test('measurement and prepared-history signals are coalesced on the history page without background polling',async({page,request})=>{
+ const initial=await setup(page,request);const frozenAt=new Date();await page.clock.install({time:frozenAt});await page.clock.pauseAt(new Date(frozenAt.getTime()+1000));
+ const {counts}=await mockHistory(page);
+ await page.goto('/#history');await expect(quality(page)).toHaveText('10 хв');const baseline=counts.series;const stateBaseline=initial.states();
+ await measurementSignal(page,initial.state,initial.state.revision+1);
+ await preparedSignal(page,2);await preparedSignal(page,3);
+ await page.clock.runFor(14999);expect(counts.series).toBe(baseline);await page.clock.runFor(1);await expect.poll(()=>counts.series).toBe(baseline+1);
+ await page.clock.fastForward(120000);expect(counts.series).toBe(baseline+1);
+ await select(page,'Рік').evaluate(button=>{if(button instanceof HTMLButtonElement)button.click();});await expect(quality(page)).toHaveText('Рік');expect(counts.series).toBe(baseline+2);
+ await preparedSignal(page,4);await preparedSignal(page,5);
+ await page.clock.runFor(59999);expect(counts.series).toBe(baseline+2);await page.clock.runFor(1);await expect.poll(()=>counts.series).toBe(baseline+3);
  expect(initial.states()).toBe(stateBaseline);
 });
 
-test('hidden history pauses while live widgets continue, then visible recovery loads once',async({page,request})=>{
- const initial=await setup(page,request);const frozenAt=new Date();await page.clock.install({time:frozenAt});await page.clock.pauseAt(new Date(frozenAt.getTime()+1000));let count=0;
- await page.route(endpoint,route=>{count++;return route.fulfill({json:series()});});
- await page.goto('/');await expect(page.locator('.quality .micro')).toHaveText('10 хв');const baseline=count;
- await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});document.dispatchEvent(new Event('visibilitychange'));});
- await aggregateSignal(page,2);await aggregateSignal(page,3);
- if(initial.state.latest?.battery)await emit(page,'telemetry.updated.v1',{schema:1,revision:initial.state.revision+1,server_time:initial.state.server_time,history_changed:true,latest:{...initial.state.latest,revision:initial.state.revision+1,battery:{...initial.state.latest.battery,soc_percent:77}}});
+test('a hidden tab pauses history while live readings continue, then visible recovery loads once per consumer',async({page,request})=>{
+ const initial=await setup(page,request);const frozenAt=new Date();await page.clock.install({time:frozenAt});await page.clock.pauseAt(new Date(frozenAt.getTime()+1000));
+ const {counts}=await mockHistory(page);
+ await page.goto('/#history');await expect(quality(page)).toHaveText('10 хв');const baseline=counts.series;
+ await setHidden(page,true);
+ await preparedSignal(page,2);await preparedSignal(page,3);
+ const latest=initial.state.latest;if(!latest?.battery)throw new Error('Expected battery');
+ await emit(page,'telemetry.updated.v1',{schema:1,revision:initial.state.revision+1,server_time:initial.state.server_time,history_changed:true,latest:{...latest,revision:initial.state.revision+1,battery:{...latest.battery,soc_percent:77}}});
+ // The dashboard mounted while hidden shows the live reading but requests nothing yet.
+ await page.evaluate(()=>{location.hash='#overview';});
  await expect(page.getByRole('img',{name:'Заряд 77 відсотків'})).toBeVisible();
- await page.clock.fastForward(120000);expect(count).toBe(baseline);
- await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,get:()=>false});document.dispatchEvent(new Event('visibilitychange'));});
- await expect.poll(()=>count).toBe(baseline+1);await page.clock.fastForward(120000);expect(count).toBe(baseline+1);
+ await page.clock.fastForward(120000);expect(counts.series).toBe(baseline);
+ await setHidden(page,false);
+ // Three dashboard consumers: the 10-minute window and the two 24-hour summaries.
+ await expect.poll(()=>counts.series).toBe(baseline+3);await page.clock.fastForward(120000);expect(counts.series).toBe(baseline+3);
+});
+
+test('hidden history page makes no requests and returns with exactly one request per consumer',async({page,request})=>{
+ const initial=await setup(page,request);const frozenAt=new Date();await page.clock.install({time:frozenAt});await page.clock.pauseAt(new Date(frozenAt.getTime()+1000));
+ const {counts}=await mockHistory(page);
+ await page.goto('/#history');await expect(quality(page)).toHaveText('10 хв');await expect.poll(()=>counts.events).toBeGreaterThan(0);
+ const series0=counts.series;const events0=counts.events;
+ await setHidden(page,true);
+ for(let step=0;step<10;step++){await preparedSignal(page,10+step);await measurementSignal(page,initial.state,initial.state.revision+1+step);await page.clock.fastForward(30000);}
+ expect(counts.series).toBe(series0);expect(counts.events).toBe(events0);
+ await setHidden(page,false);
+ await expect.poll(()=>counts.series).toBe(series0+1);await expect.poll(()=>counts.events).toBe(events0+1);
+ await page.clock.fastForward(300000);expect(counts.series).toBe(series0+1);expect(counts.events).toBe(events0+1);
 });
 
 for(const width of [320,390,600,1440]) {
- test(`pending, min/max, errors and transitions preserve chart geometry at ${width}px`,async({page,request},testInfo)=>{
+ test(`loading, empty, pending, min/max and errors preserve chart geometry at ${width}px`,async({page,request},testInfo)=>{
   test.skip(testInfo.project.name!=='desktop','Explicit viewports covered once');
   await page.setViewportSize({width,height:900});await page.emulateMedia({reducedMotion:'reduce'});await setup(page,request);
-  let fail=false;
-  await page.route(endpoint,route=>route.fulfill(fail?{status:503,json:{error:{code:'database_unavailable',message:'Unavailable'}}}:{json:series(new URL(route.request().url()).searchParams.get('range')==='1y'?'1y':'10m',true)}));
-  await page.goto('/');await expect(page.locator('.quality .micro')).toHaveText('10 хв');
-  const geometry=()=>page.locator('.history,.current-history,.quality').evaluateAll(nodes=>nodes.map(node=>{const b=node.getBoundingClientRect();return {x:b.x,y:b.y+scrollY,w:b.width,h:b.height};}));
+  let mode:'ready'|'empty'|'fail'='ready';let release=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});
+  await page.route('**/api/v1/battery/events?*',route=>route.fulfill({json:noEvents()}));
+  await page.route(endpoint,async route=>{
+   await gate;const {range,set}=requested(route);const value=series(knownRange(range),knownSet(set),true);
+   if(mode==='fail'){await route.fulfill(failure);return;}
+   await route.fulfill({json:mode==='empty'&&value.kind==='raw'?{...value,points:[],observed_coverage_seconds:0,gaps:[{from:value.from,to:value.to}]}:value});
+  });
+  await page.goto('/#history');await expect(page.getByText('Завантажуємо історію…',{exact:true})).toHaveCount(5);
+  await expect(page.getByRole('img',{name:'Потужність. Завантажуємо історію…',exact:true})).toBeVisible();await expect(page.getByRole('slider')).toHaveCount(0);
+  const geometry=()=>page.locator('.history-chart,.quality').evaluateAll(nodes=>nodes.map(node=>{const b=node.getBoundingClientRect();return {x:b.x,y:b.y+scrollY,w:b.width,h:b.height};}));
   const baseline=await geometry();
-  await select(page,'Рік').click();await expect(page.locator('.quality .micro')).toHaveText('Рік');
+  release();await expect(quality(page)).toHaveText('10 хв');expect(await geometry()).toEqual(baseline);
+  mode='empty';await page.getByRole('button',{name:'Оновити знімок'}).click();
+  await expect(page.getByText('Немає значень показника за цей період',{exact:true})).toHaveCount(5);expect(await geometry()).toEqual(baseline);
+  await expect(page.getByRole('img',{name:/^Потужність\. Виміряних точок: 0\./})).toBeVisible();await expect(page.getByRole('slider')).toHaveCount(0);
+  mode='ready';await select(page,'Рік').click();await expect(quality(page)).toHaveText('Рік');
   await expect(page.locator('.quality-value')).toContainText('—');await expect(page.locator('.quality-summary')).toContainText('Підготовлено 300 із 600 секунд');
-  await expect(page.locator('.history .chart-pending')).toHaveCount(1);await expect(page.locator('.history .chart-gap')).toHaveCount(0);
-  await expect(page.locator('.history .chart-extrema')).toHaveCount(1);
-  await expect(page.getByRole('img',{name:/Історія потужності. Середні значення/})).toHaveAttribute('aria-label',/від -100 до 200/);
+  const power=page.getByRole('region',{name:'Потужність',exact:true});
+  await expect(power.locator('.chart-pending')).toHaveCount(1);await expect(power.locator('.chart-gap')).toHaveCount(0);
+  await expect(power.locator('.chart-extrema')).toHaveCount(1);
+  await expect(page.getByRole('region',{name:'Напруга батареї',exact:true}).locator('.chart-pending')).toHaveCount(1);
+  await expect(page.getByRole('slider',{name:'Потужність',exact:true})).toHaveAccessibleDescription(/^Потужність\. Середні значення.*від -100 до 200/);
+  await expect(page.locator('.history-legend')).toContainText('Середнє; мінімум–максимум — для однієї або виділеної лінії');
   expect(await geometry()).toEqual(baseline);expect(await page.locator('.chart-outgoing').count()).toBe(0);
-  fail=true;await select(page,'30 днів').click();await expect(page.locator('.history-warning')).toContainText('Не вдалося оновити історію');
-  await expect(page.locator('.quality .micro')).toHaveText('Рік');await expect(page.locator('.history .chart-extrema')).toHaveCount(1);
+  mode='fail';await select(page,'30 днів').click();await expect(page.locator('.quality .history-warning')).toContainText('Не вдалося оновити історію');
+  await expect(quality(page)).toHaveText('Рік');await expect(power.locator('.chart-extrema')).toHaveCount(1);
   expect(await geometry()).toEqual(baseline);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath(`history-${width}.png`),fullPage:true});
  });
@@ -117,38 +127,41 @@ for(const width of [320,390,600,1440]) {
 
 test('crossfade keeps at most two plot layers and only the current graph accessible',async({page,request})=>{
  await setup(page,request);await page.emulateMedia({reducedMotion:'no-preference'});
- await page.route(endpoint,route=>route.fulfill({json:series(new URL(route.request().url()).searchParams.get('range')==='1y'?'1y':'10m')}));
- await page.goto('/');await expect(page.locator('.quality .micro')).toHaveText('10 хв');
- await select(page,'Рік').click();await expect(page.locator('.quality .micro')).toHaveText('Рік');
- expect(await page.locator('.history .chart-layer').count()).toBeLessThanOrEqual(2);
- await expect(page.getByRole('img',{name:/Історія потужності/})).toHaveCount(1);
- await page.waitForTimeout(250);await expect(page.locator('.history .chart-layer')).toHaveCount(1);
+ await mockHistory(page);
+ await page.goto('/#history');await expect(quality(page)).toHaveText('10 хв');
+ await select(page,'Рік').click();await expect(quality(page)).toHaveText('Рік');
+ const power=page.getByRole('region',{name:'Потужність',exact:true});
+ expect(await power.locator('.chart-layer').count()).toBeLessThanOrEqual(2);
+ await expect(page.getByRole('slider',{name:'Потужність',exact:true})).toHaveCount(1);
+ await page.waitForTimeout(250);await expect(power.locator('.chart-layer')).toHaveCount(1);
 });
 
 test('visible recovery and manual refresh load history once even when the state endpoint fails',async({page,request})=>{
  const initial=await setup(page,request);const frozenAt=new Date();await page.clock.install({time:frozenAt});await page.clock.pauseAt(new Date(frozenAt.getTime()+1000));
  let unavailable=false;let stateRequests=0;let historyRequests=0;let revision=1;
  let releaseState=()=>{};const stateGate=new Promise<void>(resolve=>{releaseState=resolve;});
+ await page.unroute('**/api/v1/telemetry/state');
  await page.route('**/api/v1/telemetry/state',async route=>{
   stateRequests++;
-  if(unavailable) {await stateGate;await route.fulfill({status:503,json:{error:{code:'database_unavailable',message:'Unavailable'}}});}
+  if(unavailable) {await stateGate;await route.fulfill(failure);}
   else await route.fulfill({json:initial.state});
  });
+ await page.route('**/api/v1/battery/events?*',route=>route.fulfill({json:noEvents()}));
  await page.route(endpoint,route=>{
-  historyRequests++;const range=new URL(route.request().url()).searchParams.get('range')==='1y'?'1y':'10m';
-  return route.fulfill({json:{...series(range),aggregate_revision:revision,to:stamp(600+revision)}});
+  historyRequests++;const {range,set}=requested(route);
+  return route.fulfill({json:{...series(knownRange(range),knownSet(set)),aggregate_revision:revision,to:stamp(600+revision)}});
  });
- await page.goto('/');await expect(page.locator('.quality .micro')).toHaveText('10 хв');
- await select(page,'Рік').evaluate(button=>{if(button instanceof HTMLButtonElement)button.click();});await expect(page.locator('.quality .micro')).toHaveText('Рік');
+ await page.goto('/#history');await expect(quality(page)).toHaveText('10 хв');
+ await select(page,'Рік').evaluate(button=>{if(button instanceof HTMLButtonElement)button.click();});await expect(quality(page)).toHaveText('Рік');
  const historyBaseline=historyRequests;const stateBaseline=stateRequests;
- await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});document.dispatchEvent(new Event('visibilitychange'));});
- revision=2;await aggregateSignal(page,2);unavailable=true;
- await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,get:()=>false});document.dispatchEvent(new Event('visibilitychange'));});
+ await setHidden(page,true);
+ revision=2;await preparedSignal(page,2);unavailable=true;
+ await setHidden(page,false);
  await expect.poll(()=>historyRequests).toBe(historyBaseline+1);
  const secondTime=new Date(stamp(602)).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv'});
  await expect(page.locator('.quality-summary')).toContainText(secondTime);
  // A fresh signal during state recovery remains one trailing aggregate request, not a duplicate immediate fetch.
- await aggregateSignal(page,3);releaseState();await expect(page.getByRole('status')).toContainText('База даних недоступна');
+ await preparedSignal(page,3);releaseState();await expect(page.getByRole('status')).toContainText('База даних недоступна');
  for(let step=0;step<25 && stateRequests<stateBaseline+4;step++) {
   await page.clock.runFor(1000);await page.waitForTimeout(50);
  }
@@ -163,15 +176,11 @@ test('visible recovery and manual refresh load history once even when the state 
 
 test('long ready and pending periods display exact grouped duration counters',async({page,request})=>{
  await setup(page,request);
- await page.route(endpoint,route=>{
-  const range=new URL(route.request().url()).searchParams.get('range');
-  const data=range==='30d'?{...series('30d'),period_seconds:2592000,observed_coverage_seconds:1234567,prepared_coverage_seconds:2592000}:range==='1y'?{...series('1y',true),period_seconds:31536000,prepared_coverage_seconds:12345678}:{...series()};
-  return route.fulfill({json:data});
- });
- await page.goto('/');await expect(page.locator('.quality .micro')).toHaveText('10 хв');
- await select(page,'30 днів').click();await expect(page.locator('.quality .micro')).toHaveText('30 днів');
+ await mockHistory(page,(range,set)=>range==='30d'?{...series('30d',set),period_seconds:2592000,observed_coverage_seconds:1234567,prepared_coverage_seconds:2592000}:range==='1y'?{...series('1y',set,true),period_seconds:31536000,prepared_coverage_seconds:12345678}:series(range,set));
+ await page.goto('/#history');await expect(quality(page)).toHaveText('10 хв');
+ await select(page,'30 днів').click();await expect(quality(page)).toHaveText('30 днів');
  await expect(page.locator('.quality-summary')).toContainText('1 234 567 із 2 592 000 секунд');
- await select(page,'Рік').click();await expect(page.locator('.quality .micro')).toHaveText('Рік');
+ await select(page,'Рік').click();await expect(quality(page)).toHaveText('Рік');
  await expect(page.locator('.quality-summary')).toContainText('Підготовлено 12 345 678 із 31 536 000 секунд');
  await expect(page.locator('.quality-summary')).not.toContainText(/[еe][+\-]?\d/i);
 });
@@ -183,18 +192,20 @@ for(const order of ['state-first','history-first'] as const) {
    let serverState=initial.state;let holdState=false;let historyRequests=0;let stateRequests=0;let stateReplies=0;
    let releaseHistory=()=>{};const historyGate=new Promise<void>(resolve=>{releaseHistory=resolve;});
    let releaseState=()=>{};const stateGate=new Promise<void>(resolve=>{releaseState=resolve;});
+   await page.unroute('**/api/v1/telemetry/state');
    await page.route('**/api/v1/telemetry/state',async route=>{
     stateRequests++;const snapshot=serverState;if(holdState)await stateGate;
     await route.fulfill({json:snapshot});stateReplies++;
    });
+   await page.route('**/api/v1/battery/events?*',route=>route.fulfill({json:noEvents()}));
    await page.route(endpoint,async route=>{
-    historyRequests++;const data=series();if(data.kind!=='raw')throw new Error('Expected raw fixture');
+    historyRequests++;const data=series('10m','overview');if(data.kind!=='raw')throw new Error('Expected raw fixture');
     // Capture the database snapshot before delaying only its response.
     const sourceRevision=serverState.revision;
     const captured={...data,source_revision:sourceRevision,points:data.points.map(point=>({...point,power_w:sourceRevision===initial.state.revision?10:20}))};
     await historyGate;await route.fulfill({json:captured}).catch(()=>{});
    });
-   await page.goto('/');await expect(page.getByText('Тестові дані')).toBeVisible();
+   await page.goto('/#history');await expect(page.getByText('Тестові дані')).toBeVisible();
    await expect.poll(()=>historyRequests).toBeGreaterThan(0);
    const historyBaseline=historyRequests;const stateBaseline=stateRequests;const repliesBaseline=stateReplies;
    const latest=initial.state.latest;
@@ -205,20 +216,17 @@ for(const order of ['state-first','history-first'] as const) {
    }
    holdState=true;
    // No telemetry/history publication is replayed after the subscription opens.
-   await emit(page,'open',{});await expect.poll(()=>stateRequests).toBe(stateBaseline+1);
+   await emit(page,'open');await expect.poll(()=>stateRequests).toBe(stateBaseline+1);
    if(order==='state-first') {
     releaseState();await expect.poll(()=>stateReplies).toBe(repliesBaseline+1);
-    if(changed)await expect(page.getByRole('img',{name:'Заряд 77 відсотків'})).toBeVisible();
-    releaseHistory();await expect(page.locator('.quality .micro')).toHaveText('10 хв');
+    releaseHistory();await expect(quality(page)).toHaveText('10 хв');
    } else {
-    releaseHistory();await expect(page.locator('.quality .micro')).toHaveText('10 хв');
+    releaseHistory();await expect(quality(page)).toHaveText('10 хв');
     releaseState();await expect.poll(()=>stateReplies).toBe(repliesBaseline+1);
-    if(changed)await expect(page.getByRole('img',{name:'Заряд 77 відсотків'})).toBeVisible();
    }
    await page.clock.runFor(15000);
    await expect.poll(()=>historyRequests).toBe(historyBaseline+1);
-   const power=page.getByRole('img',{name:/Історія потужності/});
-   await expect(power).toHaveAttribute('aria-label',changed?/від 20 до 20/:/від 10 до 10/);
+   await expect(page.getByRole('slider',{name:'Потужність',exact:true})).toHaveAccessibleDescription(changed?/від 20 до 20/:/від 10 до 10/);
    await page.clock.fastForward(60000);expect(historyRequests).toBe(historyBaseline+1);
   });
  }
@@ -228,21 +236,80 @@ test('first stream open refreshes aggregate preparation published before subscri
  await setup(page,request);await page.emulateMedia({reducedMotion:'reduce'});
  let aggregateRevision=1;let historyRequests=0;
  let release=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route('**/api/v1/battery/events?*',route=>route.fulfill({json:noEvents()}));
  await page.route(endpoint,async route=>{
-  historyRequests++;const range=new URL(route.request().url()).searchParams.get('range');
-  if(range!=='1y') {await route.fulfill({json:series()});return;}
+  historyRequests++;const {range,set}=requested(route);
+  if(range!=='1y') {await route.fulfill({json:series(knownRange(range),knownSet(set))});return;}
   // Capture aggregate preparation independently; source_revision stays unchanged.
-  const captured={...series('1y',aggregateRevision===1),aggregate_revision:aggregateRevision};
+  const captured={...series('1y',knownSet(set),aggregateRevision===1),aggregate_revision:aggregateRevision};
   await gate;await route.fulfill({json:captured}).catch(()=>{});
  });
- await page.goto('/');await expect(page.locator('.quality .micro')).toHaveText('10 хв');
+ await page.goto('/#history');await expect(quality(page)).toHaveText('10 хв');
  const beforeSelection=historyRequests;
  await select(page,'Рік').click();await expect.poll(()=>historyRequests).toBe(beforeSelection+1);
  aggregateRevision=2;const beforeOpen=historyRequests;
  // The hub does not replay the already-published history.updated.v1 event.
- await emit(page,'open',{});await expect.poll(()=>historyRequests).toBe(beforeOpen+1);
- release();await expect(page.locator('.quality .micro')).toHaveText('Рік');
+ await emit(page,'open');await expect.poll(()=>historyRequests).toBe(beforeOpen+1);
+ release();await expect(quality(page)).toHaveText('Рік');
  await expect(page.locator('.quality-value')).toContainText('100');
  await expect(page.locator('.quality-summary')).not.toContainText('Історія готується');
- await expect(page.locator('.history .chart-pending')).toHaveCount(0);
+ await expect(page.getByRole('region',{name:'Потужність',exact:true}).locator('.chart-pending')).toHaveCount(0);
+});
+
+// D7: every consumer keeps its own cap; nothing is requested without signals; a hidden tab pauses all.
+test('dashboard request budget: 10-minute window per measurement, 24-hour summaries and bell per prepared history',async({page,request})=>{
+ const initial=await setup(page,request);const frozenAt=new Date();await page.clock.install({time:frozenAt});await page.clock.pauseAt(new Date(frozenAt.getTime()+1000));
+ const {calls,counts}=await mockHistory(page);
+ await page.goto('/');await expect(page.getByTestId('day-range-cells')).toContainText('мін.');
+ await expect.poll(()=>counts.events).toBeGreaterThan(0);
+ const count=(key:string)=>calls.filter(call=>call===key).length;
+ const start={raw:count('10m:basic'),overview:count('24h:overview'),cells:count('24h:cells'),bell:counts.events,states:initial.states()};
+ // No signals: no requests at all.
+ await page.clock.fastForward(600000);
+ expect([count('10m:basic'),count('24h:overview'),count('24h:cells'),counts.events,initial.states()]).toEqual([start.raw,start.overview,start.cells,start.bell,start.states]);
+ // Five minutes of a measurement every 5 seconds and a new prepared revision every 5 seconds.
+ for(let second=0;second<300;second+=5) {
+  await measurementSignal(page,initial.state,initial.state.revision+1+second);await preparedSignal(page,100+second);
+  await page.clock.runFor(5000);
+ }
+ await page.waitForTimeout(100);
+ const raw=count('10m:basic')-start.raw;const overview=count('24h:overview')-start.overview;const cells=count('24h:cells')-start.cells;const bell=counts.events-start.bell;
+ expect(raw).toBeGreaterThanOrEqual(19);expect(raw).toBeLessThanOrEqual(21);
+ for(const value of [overview,cells,bell]){expect(value).toBeGreaterThanOrEqual(4);expect(value).toBeLessThanOrEqual(6);}
+ // About 7 requests per minute in this worst case (every signal changes prepared history): 4 + 1 + 1 + 1,
+ // plus at most one leading request per consumer at the start of the window.
+ expect(raw+overview+cells+bell).toBeLessThanOrEqual(7*5+4);
+ expect(counts.energy).toBe(0);expect(initial.states()).toBe(start.states);
+ expect(await page.locator('html').getAttribute('data-stream-count')).toBe('1');
+ // Hidden: nothing; visible again: exactly one request per consumer.
+ await page.clock.fastForward(120000);
+ const before={raw:count('10m:basic'),overview:count('24h:overview'),cells:count('24h:cells'),bell:counts.events};
+ await setHidden(page,true);
+ for(let second=0;second<120;second+=5){await measurementSignal(page,initial.state,initial.state.revision+400+second);await preparedSignal(page,600+second);await page.clock.runFor(5000);}
+ expect([count('10m:basic'),count('24h:overview'),count('24h:cells'),counts.events]).toEqual([before.raw,before.overview,before.cells,before.bell]);
+ await setHidden(page,false);
+ await expect.poll(()=>[count('10m:basic'),count('24h:overview'),count('24h:cells'),counts.events]).toEqual([before.raw+1,before.overview+1,before.cells+1,before.bell+1]);
+ await page.clock.fastForward(300000);
+ expect([count('10m:basic'),count('24h:overview'),count('24h:cells'),counts.events]).toEqual([before.raw+1,before.overview+1,before.cells+1,before.bell+1]);
+});
+
+test('energy tab reads daily energy only on prepared-history signals, at most once a minute',async({page,request})=>{
+ const initial=await setup(page,request);const frozenAt=new Date();await page.clock.install({time:frozenAt});await page.clock.pauseAt(new Date(frozenAt.getTime()+1000));
+ let energyCalls=0;const asked:string[]=[];
+ await page.route('**/api/v1/battery/energy/daily?*',route=>{energyCalls++;asked.push(requested(route).range??'');return route.fulfill({json:energy(requested(route).range==='1y'?'1y':requested(route).range==='3mo'?'3mo':'30d')});});
+ await page.route('**/api/v1/battery/events?*',route=>route.fulfill({json:noEvents()}));
+ let seriesCalls=0;await page.route(endpoint,route=>{seriesCalls++;return route.fulfill({json:series()});});
+ await page.goto('/#history/energy');await expect(page.getByTestId('energy-warning')).toBeVisible();await expect.poll(()=>energyCalls).toBeGreaterThan(0);
+ await page.waitForTimeout(100);const baseline=energyCalls;
+ expect(seriesCalls).toBe(0);
+ for(let second=0;second<120;second+=5){await measurementSignal(page,initial.state,initial.state.revision+1+second);await page.clock.runFor(5000);}
+ expect(energyCalls).toBe(baseline);
+ for(let second=0;second<120;second+=5){await preparedSignal(page,10+second);await page.clock.runFor(5000);}
+ await page.waitForTimeout(50);
+ expect(energyCalls-baseline).toBeGreaterThanOrEqual(2);expect(energyCalls-baseline).toBeLessThanOrEqual(3);
+ await page.getByRole('group',{name:'Період історії'}).getByRole('button',{name:'Рік'}).evaluate(button=>{if(button instanceof HTMLButtonElement)button.click();});
+ await expect.poll(()=>asked.at(-1)).toBe('1y');
+ await page.getByRole('group',{name:'Період історії'}).getByRole('button',{name:'24 год'}).evaluate(button=>{if(button instanceof HTMLButtonElement)button.click();});
+ await expect.poll(()=>asked.at(-1)).toBe('30d');
+ expect(seriesCalls).toBe(0);
 });

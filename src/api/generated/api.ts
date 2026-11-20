@@ -89,7 +89,7 @@ export interface paths {
         };
         /**
          * Bounded history presets with prepared summaries and explicit pending intervals
-         * @description One server-time snapshot for both metrics. 10m/1h use bounded raw data; longer ranges use prepared 5-minute/hour/day summaries, with at most two bounded partial five-minute raw edges. 3mo/1y subtract calendar months in Europe/Kyiv with end-of-month clamping. Pending preparation is not a measurement gap. Mean is sample-weighted; min/max preserve peaks. History preparation events use history.updated.v1 on the existing Mercure topic and an independent aggregate_revision.
+         * @description One server-time snapshot for both metrics. 10m/1h use bounded raw data; longer ranges use prepared 5-minute/hour/day summaries, with at most two bounded partial five-minute raw edges. 3mo/1y subtract calendar months in Europe/Kyiv with end-of-month clamping. Pending preparation is not a measurement gap. Mean is sample-weighted; min/max preserve peaks. History preparation events use history.updated.v1 on the existing Mercure topic and an independent aggregate_revision. Optional set=overview|cells adds typed additional metrics: per-interval detail_status and compact summaries for aggregate ranges, and per-point values for raw ranges. Without set the response is unchanged.
          */
         get: operations["getHistorySeries"];
         put?: never;
@@ -218,6 +218,46 @@ export interface paths {
          * @description Fixed configured device, exact boot_id+sequence primary key. Default view=raw returns metadata+complete semantic record, preserving unknown properties and numeric digits. PostgreSQL checks the full JSON response is at most1048576 bytes before transferring it to PHP; oversize422 record_too_large, never truncation. view=decoded loads only bounded, type-checked fragments, never entire record/source_record JSON. Read-only AA counters support22/24-byte payloads. Malformed optional capture remains explicit unavailable and does not destroy valid base telemetry.
          */
         get: operations["getTelemetryRecord"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/battery/energy/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Registered energy per Europe/Kyiv calendar day
+         * @description Every day of the range, oldest first. Energy and coverage come only from prepared summaries with detail, using the coverage support rule; nothing is credited across gaps. Small currents reported as zero are not registered.
+         */
+        get: operations["getDailyEnergy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/battery/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Battery event log, newest first
+         * @description Protection bit set/clear and charge/discharge switch transitions between adjacent valid measurements. Pauses and restarts are not events. Interpretation of protection signals is unconfirmed.
+         */
+        get: operations["listBatteryEvents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -447,6 +487,14 @@ export interface components {
             current_a: number | null;
             power_w: number | null;
             soc_percent: number | null;
+            /** @description Present only in history series with set=overview. */
+            voltage_v?: number | null;
+            /** @description Present only in history series with set=overview. */
+            temperatures_c?: number[] | null;
+            /** @description Present only in history series with set=cells. */
+            cells_v?: number[] | null;
+            /** @description Present only in history series with set=cells. */
+            cell_delta_mv?: number | null;
         };
         Gap: {
             /** Format: date-time */
@@ -491,6 +539,23 @@ export interface components {
             observed_coverage_seconds: number | null;
             power_w: components["schemas"]["HistoryMetricSummary"] | null;
             current_a: components["schemas"]["HistoryMetricSummary"] | null;
+            /**
+             * @description Present only with set=overview|cells. pending means the additional values are still being prepared; it is never an empty interval. A pending interval status implies pending detail.
+             * @enum {string}
+             */
+            detail_status?: "ready" | "pending";
+            /** @description Present only with set=overview|cells; null while detail_status is pending. */
+            detail?: components["schemas"]["HistoryDetailContinuity"] | null;
+            /** @description set=overview; null when pending or without values. */
+            soc_percent?: components["schemas"]["HistoryCompactSummary"] | null;
+            /** @description set=overview; null when pending or without values. */
+            voltage_v?: components["schemas"]["HistoryCompactSummary"] | null;
+            /** @description set=overview; one entry per sensor index up to the highest present index, null for an index without values. Null when pending. */
+            temperatures_c?: (components["schemas"]["HistoryCompactSummary"] | null)[] | null;
+            /** @description set=cells; one entry per cell index up to the highest present index, null for an index without values. Null when pending. */
+            cells_v?: (components["schemas"]["HistoryCompactSummary"] | null)[] | null;
+            /** @description set=cells; null when pending or without values. */
+            cell_delta_mv?: components["schemas"]["HistoryCompactSummary"] | null;
         };
         RawHistorySeries: {
             /** @constant */
@@ -534,6 +599,13 @@ export interface components {
             /** @enum {integer} */
             resolution_seconds: 300 | 3600 | 21600 | 86400;
             bins: components["schemas"]["HistoryBin"][];
+            /**
+             * @description Present only with set=overview|cells: ready when every interval has detail.
+             * @enum {string}
+             */
+            detail_processing_status?: "ready" | "pending";
+            /** @description Present only with set=overview|cells: total duration of intervals whose detail is ready. */
+            detail_prepared_coverage_seconds?: number;
         };
         HistorySeries: components["schemas"]["RawHistorySeries"] | components["schemas"]["AggregateHistorySeries"];
         HistoryUpdatedEvent: {
@@ -770,6 +842,99 @@ export interface components {
                  */
                 active_request?: string;
             };
+        };
+        /**
+         * @description basic keeps the original response. overview adds soc_percent, voltage_v and temperatures_c; cells adds cells_v and cell_delta_mv.
+         * @enum {string}
+         */
+        HistorySet: "basic" | "overview" | "cells";
+        /** @description Sample-weighted summary of one additional metric inside one interval. Continuity is shared, see HistoryDetailContinuity. */
+        HistoryCompactSummary: {
+            count: number;
+            mean: number;
+            min: number;
+            max: number;
+        };
+        /** @description Valid-measurement continuity shared by all additional metrics of one interval. */
+        HistoryDetailContinuity: {
+            count: number;
+            observed_coverage_seconds: number;
+            continuous: boolean;
+            /** Format: date-time */
+            first_at: string | null;
+            /** Format: date-time */
+            last_at: string | null;
+            first_boot: string | null;
+            last_boot: string | null;
+        };
+        /** @enum {string} */
+        EnergyRange: "30d" | "3mo" | "1y";
+        EnergyDay: {
+            /**
+             * Format: date
+             * @description Europe/Kyiv calendar day.
+             */
+            date: string;
+            /** @enum {integer} */
+            day_seconds: 82800 | 86400 | 90000;
+            /** @description Coverage of prepared intervals with detail only. */
+            observed_coverage_seconds: number;
+            /** @description Registered charging energy, Wh; null when observed coverage is zero. */
+            charged_wh: number | null;
+            /** @description Registered discharging energy, Wh; null when observed coverage is zero. */
+            discharged_wh: number | null;
+            /**
+             * @description outside: the whole day precedes prepared history. ready: the whole day is prepared, unmarked and has detail. Otherwise partial; the current day is always partial.
+             * @enum {string}
+             */
+            status: "ready" | "partial" | "outside";
+        };
+        EnergyDaily: {
+            range: components["schemas"]["EnergyRange"];
+            /** @constant */
+            time_zone: "Europe/Kyiv";
+            /** Format: date-time */
+            as_of: string;
+            /**
+             * Format: date-time
+             * @description Lower bound of verified prepared history; null before preparation starts.
+             */
+            prepared_from: string | null;
+            days: components["schemas"]["EnergyDay"][];
+        };
+        BatteryEvent: {
+            /**
+             * Format: date-time
+             * @description received_at of the second of two adjacent valid measurements.
+             */
+            occurred_at: string;
+            boot_id: string;
+            sequence: number;
+            /** @enum {string} */
+            kind: "protection_set" | "protection_cleared" | "charge_mos_off" | "charge_mos_on" | "discharge_mos_off" | "discharge_mos_on";
+            /** @description Protection bit; null for charge/discharge switch events. */
+            bit: number | null;
+            /** @description Ukrainian signal name; bits 16-30 are named as unknown. */
+            label: string;
+            /**
+             * @description important only for setting protection bits 0-11, 13, 14.
+             * @enum {string}
+             */
+            severity: "important" | "info";
+            /** @description More than 10 seconds between the two measurements; the moment inside the gap is unknown. */
+            after_gap: boolean;
+        };
+        BatteryEventPage: {
+            /** Format: date-time */
+            as_of: string;
+            /**
+             * Format: date-time
+             * @description Start of the latest important episode (no set of the same bit during the preceding 30 minutes) if it is not older than 7 days; otherwise null.
+             */
+            latest_important_at: string | null;
+            events: components["schemas"]["BatteryEvent"][];
+            /** @description Opaque cursor for the next older page. */
+            next_before: string | null;
         };
     };
     responses: never;
@@ -1083,6 +1248,7 @@ export interface operations {
         parameters: {
             query: {
                 range: components["schemas"]["HistoryRange"];
+                set?: components["schemas"]["HistorySet"];
             };
             header?: never;
             path?: never;
@@ -1561,6 +1727,87 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JbdErrorResponse"];
+                };
+            };
+        };
+    };
+    getDailyEnergy: {
+        parameters: {
+            query: {
+                range: components["schemas"]["EnergyRange"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Daily registered energy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnergyDaily"];
+                };
+            };
+            /** @description HTTP 422: documented error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description HTTP 503: documented error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listBatteryEvents: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Event page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatteryEventPage"];
+                };
+            };
+            /** @description HTTP 422: documented error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description HTTP 503: documented error */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

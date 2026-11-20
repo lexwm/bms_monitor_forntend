@@ -1,37 +1,26 @@
 import { test, expect } from '@playwright/test';
-import { validateState, validateHistorySeries, type RawHistorySeries } from '../src/api/validation';
+import { validateState, validateHistorySeries, type HistorySeries } from '../src/api/validation';
+import { mockHistory, series, pendingBin, readyBin, noOverflow, requested, knownRange, knownSet } from './support';
 
-function sampleHistory(): RawHistorySeries {
- const start = Date.parse('2026-11-17T12:00:00Z');
- const stamp = (seconds: number) => new Date(start + seconds * 1000).toISOString();
- const points: RawHistorySeries['points'] = [];
- for (let seconds = 0; seconds < 600; seconds += 5) {
-  if (seconds >= 240 && seconds < 300) continue;
-  const power = Math.round(180 * Math.sin(seconds / 80) - 130);
-  points.push({ received_at: stamp(seconds), boot_id: 'ffffffffffff0001', sequence: seconds, valid: true, power_w: seconds === 400 ? null : power, current_a: power / 26.4, soc_percent: 78 });
- }
- return { kind:'raw', range:'10m', resolution_seconds:0, aggregate_revision:0, prepared_at:null, processing_status:'ready', prepared_coverage_seconds:600, from: stamp(0), to: stamp(600), source_revision: 1, period_seconds: 600, observed_coverage_seconds: 540, points, gaps: [{ from: stamp(240), to: stamp(300) }] };
-}
-
-test('dashboard preserves real gaps, metric nulls and approved responsive layout', async ({ page }, testInfo) => {
+// The dashboard keeps current readings only; history charts and completeness live on the history page.
+test('dashboard has no charts, links cells to their history and keeps the approved responsive layout', async ({ page }, testInfo) => {
  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
- const history = sampleHistory(); expect(validateHistorySeries(history)).toBe(true);
- await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: history }));
+ const { calls } = await mockHistory(page);
  await page.goto('/');
- const power = page.getByRole('region', { name: 'Історія потужності', exact: true });
- const current = page.getByRole('region', { name: 'Історія струму', exact: true });
- await expect(power.getByTestId('history-segment')).toHaveCount(3);
- await expect(current.getByTestId('history-segment')).toHaveCount(2);
- await expect(power.locator('.chart-gap')).toHaveCount(1);
- await expect(page.locator('.quality-value')).toContainText('90');
- expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+ await expect(page.locator('.hero')).toBeVisible();
+ await expect(page.locator('.history-chart')).toHaveCount(0);
+ await expect(page.getByText('Повнота історії', { exact: true })).toHaveCount(0);
+ await expect(page.locator('svg.chart')).toHaveCount(0);
+ await expect(page.getByRole('button', { name: 'Оновити знімок' })).toBeVisible();
+ await expect(page.getByTestId('day-range-cells')).toHaveText('За 24 год: мін. 3,29 В · макс. 3,317 В · найбільша Δ 11 мВ');
+ expect(await noOverflow(page)).toBe(true);
  const heroBox = await page.locator('.hero').boundingBox();
  const currentBox = await page.getByRole('region', { name: 'Струм батареї', exact: true }).boundingBox();
  if (!heroBox || !currentBox) throw new Error('Expected visible cards');
  if (testInfo.project.name === 'desktop') expect(currentBox.x).toBeGreaterThan(heroBox.x + heroBox.width);
  else expect(currentBox.y).toBeGreaterThanOrEqual(heroBox.y + heroBox.height);
  await page.getByRole('button', { name: 'Відкрити меню', exact: true }).click();
- await expect(page.getByRole('navigation', { name: 'Головне меню' })).toBeVisible();
+ await expect(page.getByRole('navigation', { name: 'Головне меню' }).getByRole('link')).toHaveText(['Огляд', 'Історія', 'Налаштування батареї']);
  await page.keyboard.press('Escape');
  await expect(page.getByRole('navigation', { name: 'Головне меню' })).toBeHidden();
  await expect(page.getByRole('button', { name: 'Відкрити меню', exact: true })).toBeFocused();
@@ -39,33 +28,59 @@ test('dashboard preserves real gaps, metric nulls and approved responsive layout
  expect(await page.locator('.soc-arc').first().evaluate(el => getComputedStyle(el).transitionDuration)).toBe('0s');
  expect(await page.locator('.reading-update').first().evaluate(el => getComputedStyle(el).animationName)).toBe('none');
  await page.screenshot({ path: testInfo.outputPath('dashboard.png'), fullPage: true });
+ // Requests of the dashboard: the 10-minute window and the two 24-hour summaries, nothing for the charts.
+ expect([...new Set(calls)].sort()).toEqual(['10m:basic', '24h:cells', '24h:overview']);
+ const cell = page.getByRole('link', { name: /^Комірка 03:/ });
+ await cell.click();
+ await expect(page).toHaveURL(/#history\/cells\/3$/);
+ await expect(page.getByRole('navigation', { name: 'Вибір комірки' }).getByRole('link', { name: 'Комірка 3' })).toHaveAttribute('aria-current', 'page');
  expect(errors).toEqual([]);
 });
 
-test('missing readings and empty history never appear as zero measurements', async ({ page, request }) => {
+test('24-hour range shows lowest and highest values of all cells and sensors, a dash without values and «готується» while pending', async ({ page }) => {
+ let mode: 'ready' | 'empty' | 'pending' = 'ready';
+ await mockHistory(page, (range, set) => {
+  if (range !== '24h') return series(range, set);
+  const base = series('24h', set);
+  if (base.kind !== 'aggregate') throw new Error('Expected aggregate');
+  const bins = mode === 'pending' ? [readyBin(0, 300, set), pendingBin(300, 600, set, 'detail')] : mode === 'empty' ? [{ ...readyBin(0, 300, 'basic'), detail_status: 'ready' as const, detail: null }] : base.bins;
+  const value: HistorySeries = { ...base, bins };
+  expect(validateHistorySeries(value)).toBe(true);
+  return value;
+ });
+ await page.goto('/');
+ await expect(page.getByTestId('day-range-cells')).toContainText('мін. 3,29 В · макс. 3,317 В · найбільша Δ 11 мВ');
+ await expect(page.getByTestId('day-range-temperatures')).toHaveText('За 24 год: мін. 23 °C · макс. 27 °C');
+ mode = 'pending'; await page.getByRole('button', { name: 'Оновити знімок' }).click();
+ await expect(page.getByTestId('day-range-cells')).toHaveText('За 24 год: готується');
+ await expect(page.getByTestId('day-range-temperatures')).toHaveText('За 24 год: готується');
+ mode = 'empty'; await page.getByRole('button', { name: 'Оновити знімок' }).click();
+ await expect(page.getByTestId('day-range-cells')).toHaveText('За 24 год: —');
+ await expect(page.getByTestId('day-range-temperatures')).toHaveText('За 24 год: —');
+});
+
+test('missing readings never appear as zero measurements', async ({ page, request }) => {
  const response = await request.get('/api/v1/telemetry/state'); const state: unknown = await response.json();
  if (!validateState(state) || !state.latest?.battery) throw new Error('Expected fixture');
  const empty = { ...state, latest: { ...state.latest, battery: { ...state.latest.battery, soc_percent: null, current_a: null, power_w: null, cells_v: null, temperatures_c: null } } };
  expect(validateState(empty)).toBe(true);
  await page.route('**/api/v1/telemetry/state', route => route.fulfill({ json: empty }));
- const history = sampleHistory();
- await page.route('**/api/v1/battery/history/series?*', route => route.fulfill({ json: { ...history, points: [], observed_coverage_seconds: 0, gaps: [{ from: history.from, to: history.to }] } }));
+ await mockHistory(page);
  await page.goto('/');
  await expect(page.getByRole('img', { name: 'Заряд невідомий' })).toBeVisible();
  await expect(page.getByTestId('power-value')).toContainText('—');
  await expect(page.getByTestId('current-value')).toContainText('—');
  await expect(page.locator('.cell-fill')).toHaveCount(0);
+ await expect(page.getByRole('link', { name: 'Комірка 01: немає даних. Історія комірки' })).toBeVisible();
  await expect(page.getByText('Немає показань температури', { exact: true })).toBeVisible();
- await expect(page.getByTestId('history-segment')).toHaveCount(0);
- await expect(page.getByText('Немає значень показника за цей період', { exact: true })).toHaveCount(2);
- expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+ expect(await noOverflow(page)).toBe(true);
 });
 
-test('history failure retains a clearly labelled snapshot', async ({ page }) => {
+test('a failed 24-hour refresh keeps the snapshot and says it was not updated', async ({ page }) => {
  let failed = false;
- await page.route('**/api/v1/battery/history/series?*', route => route.fulfill(failed ? { status: 503, json: { error: { code: 'database_unavailable', message: 'Unavailable' } } } : { json: sampleHistory() }));
- await page.goto('/'); await expect(page.getByTestId('history-segment')).toHaveCount(5);
+ await page.route('**/api/v1/battery/history/series?*', route => { const { range, set } = requested(route); return route.fulfill(failed && range === '24h' ? { status: 503, json: { error: { code: 'database_unavailable', message: 'Unavailable' } } } : { json: series(knownRange(range), knownSet(set)) }); });
+ await page.goto('/'); await expect(page.getByTestId('day-range-cells')).toContainText('мін. 3,29 В');
  failed = true; await page.getByRole('button', { name: 'Оновити знімок' }).click();
- await expect(page.getByText('Не вдалося оновити історію. Збережений знімок може бути застарілим.', { exact: true })).toBeVisible();
- await expect(page.getByTestId('history-segment')).toHaveCount(5);
+ await expect(page.getByTestId('day-range-cells')).toContainText('мін. 3,29 В');
+ await expect(page.getByTestId('day-range-cells')).toContainText('не оновлено');
 });
