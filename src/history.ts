@@ -117,7 +117,8 @@ export function cursorValue(history: HistorySeries, index: number, metric: Histo
  return value ? { kind: 'bin', mean: value.mean, min: value.min, max: value.max } : null;
 }
 
-// Lowest and highest values of all cells or sensors over a period; one pending interval makes the whole result pending.
+// Lowest and highest values of all cells or sensors over a period. An older pending interval makes the result pending;
+// the newest two intervals are recalculated while measurements keep arriving, so they are left out, not waited for.
 export type PeriodExtremes = { status: 'pending' } | { status: 'ready'; min: number | null; max: number | null; delta: number | null };
 export function periodExtremes(history: HistorySeries, kind: 'cells' | 'temperatures'): PeriodExtremes {
  const list = kind === 'cells' ? 'cells_v' : 'temperatures_c';
@@ -126,7 +127,8 @@ export function periodExtremes(history: HistorySeries, kind: 'cells' | 'temperat
   const values = history.points.filter(point => point.valid).flatMap(point => point[list] ?? []);
   mins = values; maxes = values; deltas = history.points.filter(point => point.valid).flatMap(point => point.cell_delta_mv ?? []);
  } else {
-  if (history.bins.some(bin => bin.status === 'pending' || bin.detail_status === 'pending')) return { status: 'pending' };
+  const liveEdge = Date.parse(history.to) - 600000;
+  if (history.bins.some(bin => (bin.status === 'pending' || bin.detail_status === 'pending') && Date.parse(bin.from) < liveEdge)) return { status: 'pending' };
   const summaries = history.bins.flatMap(bin => bin[list] ?? []).flatMap(summary => summary && summary.count > 0 ? [summary] : []);
   mins = summaries.map(summary => summary.min); maxes = summaries.map(summary => summary.max);
   deltas = history.bins.flatMap(bin => bin.cell_delta_mv && bin.cell_delta_mv.count > 0 ? [bin.cell_delta_mv.max] : []);

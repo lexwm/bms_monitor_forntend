@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { validateState, validateHistorySeries, type HistorySeries } from '../src/api/validation';
-import { mockHistory, series, pendingBin, readyBin, noOverflow, requested, knownRange, knownSet } from './support';
+import { mockHistory, series, pendingBin, readyBin, noOverflow, requested, knownRange, knownSet, stamp } from './support';
 
 // The dashboard keeps current readings only; history charts and completeness live on the history page.
 test('dashboard has no charts, links cells to their history and keeps the approved responsive layout', async ({ page }, testInfo) => {
@@ -44,7 +44,8 @@ test('24-hour range shows lowest and highest values of all cells and sensors, a 
   const base = series('24h', set);
   if (base.kind !== 'aggregate') throw new Error('Expected aggregate');
   const bins = mode === 'pending' ? [readyBin(0, 300, set), pendingBin(300, 600, set, 'detail')] : mode === 'empty' ? [{ ...readyBin(0, 300, 'basic'), detail_status: 'ready' as const, detail: null }] : base.bins;
-  const value: HistorySeries = { ...base, bins };
+  // The interval still being prepared is older than the newest ten minutes of the period, so it is not the live edge.
+  const value: HistorySeries = mode === 'pending' ? { ...base, bins, to: stamp(1500) } : { ...base, bins };
   expect(validateHistorySeries(value)).toBe(true);
   return value;
  });

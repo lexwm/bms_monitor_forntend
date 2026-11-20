@@ -78,7 +78,13 @@ describe('additional metrics share the interval continuity',()=>{
   expect(periodExtremes(aggregate(bins),'cells')).toEqual({status:'ready',min:3.1,max:3.45,delta:35});
   expect(periodExtremes(aggregate(bins),'temperatures')).toEqual({status:'ready',min:19,max:25,delta:null});
   expect(periodExtremes(aggregate([bin(0)]),'cells')).toEqual({status:'ready',min:null,max:null,delta:null});
-  expect(periodExtremes(aggregate([...bins,bin(2,{detail_status:'pending',detail:null})]),'cells')).toEqual({status:'pending'});
+  // An interval older than the newest ten minutes that is still being prepared makes the result pending.
+  const later={...aggregate([...bins,bin(2,{detail_status:'pending',detail:null})]),to:stamp(780)};
+  expect(periodExtremes(later,'cells')).toEqual({status:'pending'});
+  expect(periodExtremes({...later,bins:[...bins,bin(2,{status:'pending'})]},'cells')).toEqual({status:'pending'});
+  // The newest intervals are recalculated while measurements arrive: they are left out and do not hide ready values.
+  expect(periodExtremes({...later,to:stamp(720)},'cells')).toEqual({status:'ready',min:3.1,max:3.45,delta:35});
+  expect(periodExtremes(aggregate([...bins,bin(2,{status:'pending'})]),'temperatures')).toEqual({status:'ready',min:19,max:25,delta:null});
  });
  it('moves the cursor between intervals or valid points',()=>{
   const times=cursorTimes(aggregate([bin(0),bin(1)]));
